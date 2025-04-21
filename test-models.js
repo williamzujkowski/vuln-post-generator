@@ -132,48 +132,85 @@ async function testClaude() {
 async function main() {
   console.log("Testing LLM providers with a simple prompt");
 
+  // Check which providers have keys available
+  const hasOpenAI = !!process.env.OPENAI_API_KEY;
+  const hasGemini = !!process.env.GOOGLE_API_KEY;
+  const hasClaude = !!process.env.CLAUDE_API_KEY;
+  const availableProviders = [];
+  
+  if (hasOpenAI) availableProviders.push("OpenAI");
+  if (hasGemini) availableProviders.push("Gemini");
+  if (hasClaude) availableProviders.push("Claude");
+  
+  console.log(`Available providers with API keys: ${availableProviders.length > 0 ? availableProviders.join(", ") : "None"}`);
+  
+  if (availableProviders.length === 0) {
+    console.log("❌ No API keys found. Please provide at least one API key (OPENAI_API_KEY, GOOGLE_API_KEY, or CLAUDE_API_KEY)");
+    process.exit(1);
+  }
+
   let results = {
     openai: false,
     gemini: false,
     claude: false,
   };
 
-  if (options.provider === "openai" || options.provider === "all") {
+  // Only test providers that have API keys
+  if ((options.provider === "openai" || options.provider === "all") && hasOpenAI) {
     results.openai = await testOpenAI();
+  } else if (options.provider === "openai" && !hasOpenAI) {
+    console.log("⚠️ OpenAI API key not found, skipping OpenAI test");
   }
 
-  if (options.provider === "gemini" || options.provider === "all") {
+  if ((options.provider === "gemini" || options.provider === "all") && hasGemini) {
     results.gemini = await testGemini();
+  } else if (options.provider === "gemini" && !hasGemini) {
+    console.log("⚠️ Google API key not found, skipping Gemini test");
   }
 
-  if (options.provider === "claude" || options.provider === "all") {
+  if ((options.provider === "claude" || options.provider === "all") && hasClaude) {
     results.claude = await testClaude();
+  } else if (options.provider === "claude" && !hasClaude) {
+    console.log("⚠️ Claude API key not found, skipping Claude test");
   }
 
   console.log("\n=== Test Results ===");
   if (options.provider === "openai" || options.provider === "all") {
-    console.log(`OpenAI: ${results.openai ? "SUCCESS ✅" : "FAILED ❌"}`);
+    if (hasOpenAI) {
+      console.log(`OpenAI: ${results.openai ? "SUCCESS ✅" : "FAILED ❌"}`);
+    } else {
+      console.log("OpenAI: NOT TESTED (no API key) ⚠️");
+    }
   }
+  
   if (options.provider === "gemini" || options.provider === "all") {
-    console.log(`Gemini: ${results.gemini ? "SUCCESS ✅" : "FAILED ❌"}`);
+    if (hasGemini) {
+      console.log(`Gemini: ${results.gemini ? "SUCCESS ✅" : "FAILED ❌"}`);
+    } else {
+      console.log("Gemini: NOT TESTED (no API key) ⚠️");
+    }
   }
+  
   if (options.provider === "claude" || options.provider === "all") {
-    console.log(`Claude: ${results.claude ? "SUCCESS ✅" : "FAILED ❌"}`);
+    if (hasClaude) {
+      console.log(`Claude: ${results.claude ? "SUCCESS ✅" : "FAILED ❌"}`);
+    } else {
+      console.log("Claude: NOT TESTED (no API key) ⚠️");
+    }
   }
 
-  // Check if all tested providers are working
-  const testedProviders = [];
-  if ((options.provider === "openai" || options.provider === "all") && results.openai)
-    testedProviders.push("OpenAI");
-  if ((options.provider === "gemini" || options.provider === "all") && results.gemini)
-    testedProviders.push("Gemini");
-  if ((options.provider === "claude" || options.provider === "all") && results.claude)
-    testedProviders.push("Claude");
+  // Check if at least one tested provider is working
+  const workingProviders = [];
+  if (results.openai) workingProviders.push("OpenAI");
+  if (results.gemini) workingProviders.push("Gemini");
+  if (results.claude) workingProviders.push("Claude");
 
-  if (testedProviders.length > 0) {
+  if (workingProviders.length > 0) {
     console.log(
-      `\nWorking providers: ${testedProviders.join(", ")}. You can use any of these for generating vulnerability posts.`
+      `\nWorking providers: ${workingProviders.join(", ")}. You can use any of these for generating vulnerability posts.`
     );
+  } else if (availableProviders.length > 0) {
+    console.log("\n❌ None of the available providers are working. Please check your API keys and try again.");
   }
 }
 

@@ -10,9 +10,11 @@ These keys should be configured as GitHub Secrets in your repository settings (S
 
 | Secret Name | Description | Required | How to Obtain |
 |-------------|-------------|----------|--------------|
-| `OPENAI_API_KEY` | OpenAI API key for GPT-4 and other models | Yes | 1. Sign up at https://platform.openai.com/signup<br>2. Navigate to https://platform.openai.com/api-keys<br>3. Click "Create new secret key" |
-| `GOOGLE_API_KEY` | Google API key for Gemini models | Yes | 1. Sign up at https://makersuite.google.com/app/apikey<br>2. Create a new API key in the Google AI Studio<br>3. Enable the Gemini API in your Google Cloud project |
-| `CLAUDE_API_KEY` | Anthropic API key for Claude models | Yes | 1. Sign up at https://console.anthropic.com/<br>2. Navigate to https://console.anthropic.com/settings/keys<br>3. Create a new API key |
+| `OPENAI_API_KEY` | OpenAI API key for GPT-4 and other models | At least one provider API key required | 1. Sign up at https://platform.openai.com/signup<br>2. Navigate to https://platform.openai.com/api-keys<br>3. Click "Create new secret key" |
+| `GOOGLE_API_KEY` | Google API key for Gemini models | At least one provider API key required | 1. Sign up at https://makersuite.google.com/app/apikey<br>2. Create a new API key in the Google AI Studio<br>3. Enable the Gemini API in your Google Cloud project |
+| `CLAUDE_API_KEY` | Anthropic API key for Claude models | At least one provider API key required | 1. Sign up at https://console.anthropic.com/<br>2. Navigate to https://console.anthropic.com/settings/keys<br>3. Create a new API key |
+
+**Note:** You need at least one API key from any of the providers above. Having 2-3 provider keys is recommended for redundancy and comparison but not required.
 
 ### Data Source API Keys
 

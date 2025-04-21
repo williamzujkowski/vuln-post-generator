@@ -35,22 +35,59 @@ let tokenUsage = {
 // Load environment variables
 dotenv.config({ path: process.env.ENV_FILE || '.env.test' });
 
-// Check for required API keys based on provider
-const LLM_PROVIDER = process.env.LLM_PROVIDER || "openai";
-if (LLM_PROVIDER === "openai" && !process.env.OPENAI_API_KEY) {
-  console.error(
-    "Error: OPENAI_API_KEY environment variable is required when using OpenAI provider"
-  );
+// Check for at least one available API key
+const hasOpenAI = !!process.env.OPENAI_API_KEY;
+const hasGemini = !!process.env.GOOGLE_API_KEY;
+const hasClaude = !!process.env.CLAUDE_API_KEY;
+
+if (!hasOpenAI && !hasGemini && !hasClaude) {
+  console.error("Error: At least one LLM provider API key is required (OPENAI_API_KEY, GOOGLE_API_KEY, or CLAUDE_API_KEY)");
   process.exit(1);
-} else if (LLM_PROVIDER === "gemini" && !process.env.GOOGLE_API_KEY) {
-  console.error(
-    "Error: GOOGLE_API_KEY environment variable is required when using Gemini provider"
-  );
+}
+
+// Set default provider based on available keys
+let LLM_PROVIDER = process.env.LLM_PROVIDER || "openai";
+
+// Override provider if specified one doesn't have a key
+if (LLM_PROVIDER === "openai" && !hasOpenAI) {
+  if (hasGemini) {
+    console.log("OpenAI API key not found, switching to Gemini");
+    LLM_PROVIDER = "gemini";
+  } else if (hasClaude) {
+    console.log("OpenAI API key not found, switching to Claude");
+    LLM_PROVIDER = "claude";
+  }
+} else if (LLM_PROVIDER === "gemini" && !hasGemini) {
+  if (hasOpenAI) {
+    console.log("Gemini API key not found, switching to OpenAI");
+    LLM_PROVIDER = "openai";
+  } else if (hasClaude) {
+    console.log("Gemini API key not found, switching to Claude");
+    LLM_PROVIDER = "claude";
+  }
+} else if (LLM_PROVIDER === "claude" && !hasClaude) {
+  if (hasOpenAI) {
+    console.log("Claude API key not found, switching to OpenAI");
+    LLM_PROVIDER = "openai";
+  } else if (hasGemini) {
+    console.log("Claude API key not found, switching to Gemini");
+    LLM_PROVIDER = "gemini";
+  }
+}
+
+// Override env variable with potentially adjusted value
+process.env.LLM_PROVIDER = LLM_PROVIDER;
+console.log(`Using LLM provider: ${LLM_PROVIDER}`);
+
+// Verify we have the API key for the selected provider
+if (LLM_PROVIDER === "openai" && !hasOpenAI) {
+  console.error("Error: OPENAI_API_KEY environment variable is required when using OpenAI provider");
   process.exit(1);
-} else if (LLM_PROVIDER === "claude" && !process.env.CLAUDE_API_KEY) {
-  console.error(
-    "Error: CLAUDE_API_KEY environment variable is required when using Claude provider"
-  );
+} else if (LLM_PROVIDER === "gemini" && !hasGemini) {
+  console.error("Error: GOOGLE_API_KEY environment variable is required when using Gemini provider");
+  process.exit(1);
+} else if (LLM_PROVIDER === "claude" && !hasClaude) {
+  console.error("Error: CLAUDE_API_KEY environment variable is required when using Claude provider");
   process.exit(1);
 }
 
