@@ -173,6 +173,7 @@ This system integrates with multiple security data sources:
 |--------|-------------|------------------|
 | National Vulnerability Database (NVD) | NIST's comprehensive vulnerability database | Recommended |
 | MITRE CVE Program | Authoritative CVE information | No |
+| FIRST.org EPSS | Exploit Prediction Scoring System | No |
 | Zero Day Initiative (ZDI) | Security researcher vulnerability details | No |
 | CERT/CC Vulnerability Notes | CERT Coordination Center analysis | No |
 | VulDB | Vulnerability Database with detailed information | No |
@@ -182,6 +183,26 @@ This system integrates with multiple security data sources:
 | AlienVault OTX | Threat intelligence platform | Yes |
 
 For detailed information about each data source and its implementation, see [DATA_SOURCES.md](./DATA_SOURCES.md).
+
+## Vulnerability Prioritization with EPSS
+
+The system uses EPSS (Exploit Prediction Scoring System) to prioritize vulnerabilities with high likelihood of exploitation:
+
+1. When using `--latest` option, the system fetches the most recent critical vulnerabilities
+2. EPSS scores are obtained from FIRST.org's EPSS API for each vulnerability
+3. Vulnerabilities are sorted by EPSS score to prioritize those most likely to be exploited
+4. Blog posts focus on the most relevant threats based on both severity and exploitation potential
+
+EPSS scores represent the probability that a vulnerability will be exploited in the next 30 days, enabling more targeted focus on vulnerabilities that pose immediate risk.
+
+To enable or disable EPSS scoring:
+```bash
+# Enable EPSS scoring (default)
+npm run generate -- --latest
+
+# Disable EPSS scoring
+npm run generate -- --latest --no-epss
+```
 
 ## Retrieval-Augmented Generation
 
@@ -210,11 +231,26 @@ To reduce API costs, the system implements several token optimization strategies
 - Automatic content truncation
 - Reference URL deduplication and limiting
 - Cost-efficient model selection
+- **Tiered Model Approach**: Uses cheaper models for initial data gathering and expensive models only for final synthesis
+
+The tiered model approach works as follows:
+1. A cheaper model (GPT-3.5, Claude Haiku, or Gemini Flash) extracts key technical information
+2. A premium model (GPT-4, Claude Opus, or Gemini Pro) uses this extraction to create the final content
+3. This approach maintains quality while reducing token costs for premium models
 
 Configure token usage in `.env`:
 ```
 # Set to true to use more cost-efficient models
 USE_EFFICIENT_MODEL=true
+
+# Set to false to disable the tiered model approach
+TIERED_MODEL_APPROACH=true
+```
+
+You can also disable the tiered approach for specific runs:
+```bash
+# Disable tiered approach for a specific run
+npm run generate -- --latest --no-tiered-approach
 ```
 
 For more details, see [OPTIMIZATION_GUIDE.md](./OPTIMIZATION_GUIDE.md).
@@ -282,6 +318,9 @@ For more information on security best practices for API keys, see [API_KEYS.md](
 |----------|-------------|---------|
 | `LLM_PROVIDER` | Default LLM provider (openai, gemini, claude) | claude |
 | `USE_EFFICIENT_MODEL` | Use cost-efficient models when available | true |
+| `TIERED_MODEL_APPROACH` | Enable tiered model approach for cost optimization | true |
+| `EPSS_ENABLED` | Enable EPSS scoring for vulnerability prioritization | true |
+| `EPSS_USER_AGENT` | Custom user agent for EPSS API requests | "Vulnerability Blog Generator" |
 | `MITRE_API_ENABLED` | Enable MITRE CVE API | true |
 | `ZDI_ENABLED` | Enable Zero Day Initiative data | true |
 | `CERT_CC_ENABLED` | Enable CERT/CC data | true |
@@ -304,6 +343,8 @@ For more information on security best practices for API keys, see [API_KEYS.md](
 | `--latest` | Generate for the latest critical vulnerability | `--latest` |
 | `--provider` | Specify LLM provider to use | `--provider claude` |
 | `--no-rag` | Disable Retrieval-Augmented Generation | `--no-rag` |
+| `--no-tiered-approach` | Disable tiered model approach | `--no-tiered-approach` |
+| `--no-epss` | Disable EPSS scoring for vulnerability prioritization | `--no-epss` |
 
 ## Troubleshooting
 

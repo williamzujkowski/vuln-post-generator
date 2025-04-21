@@ -15,6 +15,9 @@
  *   --cve CVE-ID     Generate a post for a specific CVE
  *   --latest         Generate a post for the latest critical vulnerability
  *   --weekly         Generate a weekly roll-up of critical vulnerabilities
+ *   --provider       LLM provider to use (openai, gemini, claude)
+ *   --no-rag         Disable Retrieval-Augmented Generation
+ *   --no-tiered-approach   Disable tiered approach (use premium model directly)
  */
 
 const fs = require("fs");
@@ -97,6 +100,8 @@ program
   .option("--weekly", "Generate a weekly roll-up of critical vulnerabilities")
   .option("--provider <provider>", "LLM provider to use (openai, gemini, claude)")
   .option("--no-rag", "Disable Retrieval-Augmented Generation")
+  .option("--no-tiered-approach", "Disable the tiered approach for content generation (use premium model directly)")
+  .option("--no-epss", "Disable EPSS scoring for vulnerability prioritization")
   .parse(process.argv);
 
 const options = program.opts();
@@ -610,6 +615,62 @@ function getSeverityFromV2Score(score) {
   if (numScore >= 4.0) return 'Medium';
   if (numScore >= 0.1) return 'Low';
   return 'None';
+}
+
+/**
+ * Fetches the EPSS (Exploit Prediction Scoring System) score for a CVE
+ * 
+ * EPSS scores represent the probability that a vulnerability will be exploited in the next 30 days
+ * Higher scores indicate higher likelihood of exploitation
+ * 
+ * @param {string} cveId - The CVE ID (e.g., CVE-2023-12345)
+ * @returns {Promise<{score: number, percentile: number}>} EPSS score (0-1) and percentile
+ */
+async function getEpssScore(cveId) {
+  // Default return if we can't fetch EPSS data
+  const defaultReturn = { score: null, percentile: null };
+  
+  // Skip if EPSS is disabled via environment variable or command-line option
+  if (process.env.EPSS_ENABLED === "false" || options.epss === false) {
+    console.log(`EPSS scoring disabled via ${options.epss === false ? 'command-line option' : 'environment variable'}`);
+    return defaultReturn;
+  }
+  
+  try {
+    console.log(`Fetching EPSS score for ${cveId}...`);
+    
+    // Make the API request to FIRST.org EPSS API
+    const response = await axios.get(
+      `https://api.first.org/data/v1/epss`,
+      {
+        params: { cve: cveId },
+        timeout: 5000, // 5 second timeout
+        headers: {
+          "User-Agent": process.env.EPSS_USER_AGENT || "Vulnerability Blog Generator (https://github.com/williamzujkowski/williamzujkowski.github.io)",
+        }
+      }
+    );
+    
+    // Check if we got a valid response with data
+    if (response.data && response.data.data && response.data.data.length > 0) {
+      const epssData = response.data.data[0];
+      const score = parseFloat(epssData.epss);
+      const percentile = parseFloat(epssData.percentile);
+      
+      console.log(`EPSS score for ${cveId}: ${score.toFixed(4)} (${percentile.toFixed(2)} percentile)`);
+      
+      return {
+        score,
+        percentile
+      };
+    } else {
+      console.log(`No EPSS data found for ${cveId}`);
+      return defaultReturn;
+    }
+  } catch (error) {
+    console.error(`Error fetching EPSS score for ${cveId}:`, error.message);
+    return defaultReturn;
+  }
 }
 
 // Helper function to extract product information with enhanced version handling
@@ -1648,6 +1709,15 @@ async function createInputData(cveId) {
 
   mitigationGuidance +=
     "Specific patches and workarounds may be available in vendor advisories.";
+    
+  // Fetch EPSS score to assess exploitation probability
+  console.log(`Fetching EPSS score for ${cveId}...`);
+  const epssData = await getEpssScore(cveId);
+  
+  // Add EPSS data source if we got a valid score
+  if (epssData.score !== null) {
+    dataSources.push("FIRST.org EPSS");
+  }
 
   return {
     CVE_ID: cveId,
@@ -1658,6 +1728,8 @@ async function createInputData(cveId) {
     CVSS_SCORE: cvssScore,
     CVSS_VECTOR: cvssVector,
     SEVERITY_RATING: severityRating,
+    EPSS_SCORE: epssData.score !== null ? epssData.score.toFixed(4) : "Unknown",
+    EPSS_PERCENTILE: epssData.percentile !== null ? epssData.percentile.toFixed(2) : "Unknown",
     AFFECTED_SOFTWARE:
       vulnData.configurations?.[0]?.nodes?.[0]?.cpeMatch?.[0]?.criteria?.split(
         ":"
@@ -1898,6 +1970,8 @@ function createMinimalInputData(cveId, fallbackVulnData, mitreCveData, zdiData) 
     CVSS_SCORE: cvssScore,
     CVSS_VECTOR: cvssVector,
     SEVERITY_RATING: severityRating,
+    EPSS_SCORE: "Unknown",
+    EPSS_PERCENTILE: "Unknown",
     AFFECTED_SOFTWARE: affectedSoftware,
     AFFECTED_VERSIONS: affectedVersions,
     VULN_SUMMARY: description,
@@ -2130,6 +2204,17 @@ async function generateBlogPost(inputData) {
     console.log(`Estimated input tokens: ~${estimatedInputTokens}`);
     
     // Use the LLM provider module to generate content
+    // By default, this uses a tiered approach where a cheaper model first extracts key information,
+    // and then a premium model synthesizes the final content for better cost efficiency
+    // Set modelOptions.useTieredApproach = false to disable this behavior
+    
+    // Pass the tiered approach option from command line (if specified)
+    modelOptions.useTieredApproach = options.tieredApproach !== false;
+    
+    if (options.tieredApproach === false) {
+      console.log('Tiered approach disabled, using premium model directly');
+    }
+    
     const content = await generateContent(populatedPrompt, modelOptions);
 
     return content;
@@ -2323,7 +2408,42 @@ async function findLatestCriticalCVE() {
       response.data.vulnerabilities &&
       response.data.vulnerabilities.length > 0
     ) {
-      // Return the CVE ID of the most recent critical vulnerability
+      // Get EPSS scores for the top vulnerabilities to prioritize by exploitation likelihood
+      console.log(`Found ${response.data.vulnerabilities.length} critical vulnerabilities, checking EPSS scores...`);
+      
+      // Only check the first 5 vulnerabilities to avoid API overload
+      const topVulnerabilities = response.data.vulnerabilities.slice(0, 5);
+      
+      // Get EPSS scores for each vulnerability in parallel
+      const vulnerabilitiesWithEpss = await Promise.all(
+        topVulnerabilities.map(async (vuln) => {
+          const epssData = await getEpssScore(vuln.cve.id);
+          return {
+            cveId: vuln.cve.id,
+            publishedDate: vuln.cve.published,
+            // Default to 0 if no EPSS score is available
+            epssScore: epssData.score !== null ? epssData.score : 0,
+            epssPercentile: epssData.percentile !== null ? epssData.percentile : 0
+          };
+        })
+      );
+      
+      // Check if we have any vulnerabilities with EPSS scores
+      const vulnerabilitiesWithValidEpss = vulnerabilitiesWithEpss.filter(v => v.epssScore > 0);
+      
+      if (vulnerabilitiesWithValidEpss.length > 0) {
+        // Sort by EPSS score (exploitation probability) in descending order
+        vulnerabilitiesWithValidEpss.sort((a, b) => b.epssScore - a.epssScore);
+        
+        const selectedVuln = vulnerabilitiesWithValidEpss[0];
+        console.log(`Selected ${selectedVuln.cveId} with EPSS score ${selectedVuln.epssScore.toFixed(4)} (${selectedVuln.epssPercentile.toFixed(2)} percentile)`);
+        
+        // Return the CVE ID with the highest EPSS score
+        return selectedVuln.cveId;
+      }
+      
+      // Fallback to the most recent vulnerability if no EPSS scores are available
+      console.log(`No EPSS scores available, defaulting to most recent vulnerability: ${response.data.vulnerabilities[0].cve.id}`);
       return response.data.vulnerabilities[0].cve.id;
     }
 
@@ -2346,7 +2466,42 @@ async function findLatestCriticalCVE() {
       highSeverityResponse.data.vulnerabilities &&
       highSeverityResponse.data.vulnerabilities.length > 0
     ) {
-      // Return the CVE ID of the most recent high severity vulnerability
+      // Get EPSS scores for the top high severity vulnerabilities
+      console.log(`Found ${highSeverityResponse.data.vulnerabilities.length} high severity vulnerabilities, checking EPSS scores...`);
+      
+      // Only check the first 5 vulnerabilities to avoid API overload
+      const topVulnerabilities = highSeverityResponse.data.vulnerabilities.slice(0, 5);
+      
+      // Get EPSS scores for each vulnerability in parallel
+      const vulnerabilitiesWithEpss = await Promise.all(
+        topVulnerabilities.map(async (vuln) => {
+          const epssData = await getEpssScore(vuln.cve.id);
+          return {
+            cveId: vuln.cve.id,
+            publishedDate: vuln.cve.published,
+            // Default to 0 if no EPSS score is available
+            epssScore: epssData.score !== null ? epssData.score : 0,
+            epssPercentile: epssData.percentile !== null ? epssData.percentile : 0
+          };
+        })
+      );
+      
+      // Check if we have any vulnerabilities with EPSS scores
+      const vulnerabilitiesWithValidEpss = vulnerabilitiesWithEpss.filter(v => v.epssScore > 0);
+      
+      if (vulnerabilitiesWithValidEpss.length > 0) {
+        // Sort by EPSS score (exploitation probability) in descending order
+        vulnerabilitiesWithValidEpss.sort((a, b) => b.epssScore - a.epssScore);
+        
+        const selectedVuln = vulnerabilitiesWithValidEpss[0];
+        console.log(`Selected ${selectedVuln.cveId} with EPSS score ${selectedVuln.epssScore.toFixed(4)} (${selectedVuln.epssPercentile.toFixed(2)} percentile)`);
+        
+        // Return the CVE ID with the highest EPSS score
+        return selectedVuln.cveId;
+      }
+      
+      // Fallback to the most recent vulnerability if no EPSS scores are available
+      console.log(`No EPSS scores available, defaulting to most recent high severity vulnerability: ${highSeverityResponse.data.vulnerabilities[0].cve.id}`);
       return highSeverityResponse.data.vulnerabilities[0].cve.id;
     }
 

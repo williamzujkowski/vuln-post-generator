@@ -9,23 +9,89 @@ const axios = require("axios");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 /**
- * Generate content using the selected LLM provider
+ * Generate content using the selected LLM provider with a tiered approach
+ * Uses cheaper models for data gathering and expensive models for final synthesis
  *
  * @param {string} prompt - The prompt to send to the LLM
  * @param {Object} options - Provider-specific options
+ * @param {boolean} options.useTieredApproach - Whether to use the tiered approach (default: true)
+ * @param {boolean} options.isDataGathering - Whether this is a data gathering step (internal use)
  * @returns {Promise<string>} The generated content
  */
 async function generateContent(prompt, options = {}) {
   const provider = process.env.LLM_PROVIDER || "openai";
+  const useTieredApproach = options.useTieredApproach !== false; // Default to true unless explicitly disabled
 
-  console.log(`Using LLM provider: ${provider}`);
+  console.log(`Using LLM provider: ${provider} ${useTieredApproach ? '(tiered approach)' : ''}`);
 
+  // If this is the final compilation or tiered approach is disabled, use the premium model
+  if (!useTieredApproach || options.isCompilation) {
+    if (provider.toLowerCase() === "gemini") {
+      return generateWithGemini(prompt, options);
+    } else if (provider.toLowerCase() === "claude") {
+      return generateWithClaude(prompt, options);
+    } else {
+      return generateWithOpenAI(prompt, options);
+    }
+  }
+  
+  // For data gathering steps, use cheaper models
+  // Step 1: Extract key information using a cheaper model
+  console.log("Step 1: Using cheaper model for initial data gathering");
+  
+  // Create a simplified prompt for data gathering
+  const dataGatheringPrompt = `
+  Extract and summarize the key technical facts about this vulnerability. Focus on:
+  - Technical mechanism
+  - Affected systems 
+  - Exploitation methods
+  - Impact details
+  - Technical mitigations
+  
+  Original prompt: ${prompt}`;
+  
+  // Use cheaper models for each provider
+  let initialData;
+  const dataGatheringOptions = { ...options, isDataGathering: true };
+  
   if (provider.toLowerCase() === "gemini") {
-    return generateWithGemini(prompt, options);
+    dataGatheringOptions.model = "gemini-2.0-flash"; // Use Gemini Flash (cheaper)
+    initialData = await generateWithGemini(dataGatheringPrompt, dataGatheringOptions);
   } else if (provider.toLowerCase() === "claude") {
-    return generateWithClaude(prompt, options);
+    dataGatheringOptions.model = "claude-3-haiku-20240307"; // Use Claude Haiku (cheaper)
+    initialData = await generateWithClaude(dataGatheringPrompt, dataGatheringOptions);
   } else {
-    return generateWithOpenAI(prompt, options);
+    dataGatheringOptions.model = "gpt-3.5-turbo"; // Use GPT-3.5 (cheaper)
+    initialData = await generateWithOpenAI(dataGatheringPrompt, dataGatheringOptions);
+  }
+  
+  // Step 2: Generate final content using premium model with the extracted data
+  console.log("Step 2: Using premium model for final synthesis");
+  
+  const synthesisPrompt = `
+  Use the following technical analysis as reference while creating your final response:
+  
+  TECHNICAL ANALYSIS FROM FIRST PASS:
+  ${initialData}
+  
+  ORIGINAL REQUEST:
+  ${prompt}
+  
+  Create a comprehensive, well-structured response using the technical details above.
+  `;
+  
+  // Use premium models for final synthesis
+  const finalOptions = { ...options, isCompilation: true };
+  
+  if (provider.toLowerCase() === "gemini") {
+    finalOptions.model = options.model || "gemini-2.0-pro"; // Use default premium model
+    return generateWithGemini(synthesisPrompt, finalOptions);
+  } else if (provider.toLowerCase() === "claude") {
+    finalOptions.model = options.model || "claude-3-opus-20240229"; // Use default premium model
+    return generateWithClaude(synthesisPrompt, finalOptions);
+  } else {
+    finalOptions.model = options.model || "gpt-4-turbo"; // Use default premium model
+    return generateWithOpenAI(synthesisPrompt, finalOptions);
   }
 }
 
