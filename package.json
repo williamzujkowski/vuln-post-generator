@@ -1,0 +1,51 @@
+{
+  "name": "vuln-post-generator",
+  "version": "1.0.0",
+  "description": "A comprehensive system for generating high-quality vulnerability analysis blog posts",
+  "main": "generate-vuln-post.js",
+  "scripts": {
+    "generate": "node generate-vuln-post.js",
+    "generate:latest": "node generate-vuln-post.js --latest",
+    "generate:openai": "node generate-vuln-post.js --provider openai",
+    "generate:gemini": "node generate-vuln-post.js --provider gemini",
+    "generate:claude": "node generate-vuln-post.js --provider claude",
+    "schedule": "node schedule-posts.js",
+    "update-index": "node scripts/update-index.js",
+    "test-openai": "node test-models.js --provider openai",
+    "test-gemini": "node test-models.js --provider gemini",
+    "test-claude": "node test-models.js --provider claude",
+    "test-models": "node test-models.js --provider all",
+    "test:sources": "node test-data-sources.js",
+    "test:sources:cve": "node test-data-sources.js --cve",
+    "test:vuldb": "node test-vuldb.js",
+    "test:vuldb:cve": "node test-vuldb.js --cve",
+    "setup-cron": "./setup-cron.sh"
+  },
+  "keywords": [
+    "vulnerability",
+    "security",
+    "blog",
+    "llm",
+    "gpt",
+    "gemini",
+    "claude",
+    "prompt",
+    "rag"
+  ],
+  "author": "William Zujkowski",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/vuln-post-generator.git"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.2.0",
+    "axios": "^1.6.2",
+    "commander": "^11.1.0",
+    "date-fns": "^2.30.0",
+    "dotenv": "^16.3.1",
+    "lru-cache": "^10.2.0",
+    "rimraf": "^5.0.5",
+    "glob": "^10.3.10"
+  }
+}

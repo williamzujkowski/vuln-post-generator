@@ -1,73 +1,77 @@
-# Contributing Guidelines
+# Contributing to Vulnerability Post Generator
 
-Thank you for your interest in contributing to this project\! We value the contributions of each community member and want to make the process as smooth as possible.
+Thank you for considering contributing to this project! This document outlines the process for contributing and guidelines to follow.
 
 ## Code of Conduct
 
-By participating in this project, you agree to abide by our Code of Conduct. Please read it before contributing.
+By participating in this project, you agree to maintain a respectful and inclusive environment for everyone.
 
 ## How to Contribute
 
 ### Reporting Bugs
 
-- Before submitting a bug report, please check that it has not already been reported
-- Use the bug report template when creating an issue
-- Include as much detail as possible: steps to reproduce, expected behavior, actual behavior, and environment details
+If you've found a bug, please create an issue using the bug report template. Be sure to include:
+
+- A clear description of the bug
+- Steps to reproduce it
+- Expected and actual behavior
+- Environment details (OS, Node.js version, etc.)
+- Any relevant logs or screenshots
 
 ### Suggesting Features
 
-- Use the feature request template when creating an issue
-- Clearly describe the problem your feature would solve
-- Explain how your solution would work
-- Consider the scope of the feature
+For feature requests, please create an issue using the feature request template. Include:
+
+- A clear description of the feature
+- The problem it solves
+- A proposed implementation approach
+- Any alternative approaches you've considered
 
 ### Pull Requests
 
 1. Fork the repository
-2. Create a new branch for your feature or bug fix
+2. Create a new branch (`git checkout -b feature/your-feature-name`)
 3. Make your changes
-4. Add or update tests as necessary
-5. Ensure all tests pass
-6. Commit your changes with clear, descriptive commit messages
-7. Push your branch to your fork
-8. Submit a pull request to the main repository
+4. Run tests to ensure they pass
+5. Commit your changes with clear commit messages
+6. Push to your branch (`git push origin feature/your-feature-name`)
+7. Open a pull request
+
+#### Pull Request Guidelines
+
+- Include the purpose of your PR in the title
+- Provide a detailed description of the changes
+- Reference any related issues
+- Update documentation if needed
+- Ensure all tests pass
+- Maintain code style consistency
 
 ## Development Setup
 
-```bash
-# Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -e ".[dev]"
-
-# Install pre-commit hooks
-pre-commit install
-```
-
-## Style Guidelines
-
-- Follow PEP 8 for Python code
-- Use meaningful variable and function names
-- Add comments to explain complex logic
-- Write good commit messages
-
-## Testing
-
-- Add tests for new features
-- Ensure all tests pass before submitting a pull request
-- Aim for good test coverage
+1. Clone the repository
+2. Install dependencies: `npm install`
+3. Copy the environment file: `cp .env.sample .env`
+4. Configure your environment variables
+5. Run tests: `npm run test-models` and `npm run test:sources`
 
 ## Documentation
 
-- Update documentation for new features or changes in behavior
-- Use clear language and provide examples where helpful
+Please update documentation as needed when making changes:
 
-## Review Process
+- README.md for general usage and features
+- API_KEYS.md for API key information
+- WORKFLOW_GUIDE.md for process documentation
+- GITHUB_ACTIONS_README.md for CI/CD documentation
 
-- All submissions require review
-- Maintainers may suggest changes or improvements
-- Once approved, maintainers will merge your contribution
+## Testing
 
-Thank you for contributing\!
+Before submitting a PR, please run:
+
+```bash
+npm run test-models
+npm run test:sources
+```
+
+## Licensing
+
+By contributing to this project, you agree that your contributions will be licensed under the project's MIT license.
