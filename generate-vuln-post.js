@@ -2204,35 +2204,32 @@ function saveBlogPost(content, cveId, inputData) {
     console.log(`Truncated TECHNICAL_DETAILS field from ${inputData.TECHNICAL_DETAILS.length} to ${MAX_TECHNICAL_DETAILS_LENGTH} characters`);
   }
   
-  // Create a more descriptive title based on available information
+  // Create a standardized title in the format: "CVE ID - Severity Rating - Key CWE ID"
   let vulnTitle = "";
   
-  // Include the severity if known
-  if (inputData.SEVERITY_RATING && inputData.SEVERITY_RATING !== "Unknown") {
-    vulnTitle += `[${inputData.SEVERITY_RATING}] `;
-  }
-  
-  // Always include the CVE ID
+  // Always include the CVE ID as the first part of the title
   vulnTitle += cveId;
   
-  // If we have affected software, add it to the title
-  if (inputData.AFFECTED_SOFTWARE && inputData.AFFECTED_SOFTWARE !== "Unknown") {
-    vulnTitle += `: ${inputData.AFFECTED_SOFTWARE}`;
-    
-    // If we have a CWE or vulnerability type, add it as well
-    if (inputData.CWE_ID && inputData.CWE_ID !== "Unknown") {
-      // Extract a friendly name from CWE if possible
-      const cweMatch = inputData.CWE_ID.match(/CWE-\d+\s+(.+)/);
-      if (cweMatch && cweMatch[1]) {
-        vulnTitle += ` ${cweMatch[1]}`;
-      } else if (inputData.VULN_NAME && inputData.VULN_NAME !== cveId) {
-        // Fall back to VULN_NAME if it's not just the CVE ID
-        vulnTitle += ` ${inputData.VULN_NAME.replace(cveId, '').trim()}`;
-      }
+  // Add the severity rating
+  const severityRating = (inputData.SEVERITY_RATING && inputData.SEVERITY_RATING !== "Unknown") 
+    ? inputData.SEVERITY_RATING 
+    : "Unknown";
+  vulnTitle += ` - ${severityRating}`;
+  
+  // Add the CWE ID and name if available
+  if (inputData.CWE_ID && inputData.CWE_ID !== "Unknown") {
+    // Extract just the CWE ID number if it's in the format "CWE-XXX Description"
+    const cweMatch = inputData.CWE_ID.match(/CWE-(\d+)\s+(.+)/);
+    if (cweMatch && cweMatch[1] && cweMatch[2]) {
+      // Format as "CWE-XXX Description"
+      vulnTitle += ` - CWE-${cweMatch[1]} ${cweMatch[2]}`;
+    } else {
+      // Use the entire CWE_ID as provided
+      vulnTitle += ` - ${inputData.CWE_ID}`;
     }
-  } else if (inputData.VULN_NAME && inputData.VULN_NAME !== cveId) {
-    // If we don't have affected software but do have a name, use that
-    vulnTitle += `: ${inputData.VULN_NAME.replace(cveId, '').trim()}`;
+  } else {
+    // No CWE available
+    vulnTitle += " - Unknown";
   }
   
   // Add frontmatter
