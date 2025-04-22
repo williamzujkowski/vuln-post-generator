@@ -43,19 +43,201 @@ program
 const options = program.opts();
 
 /**
- * Create input data for a CVE
+ * Create input data for a CVE by querying the NVD API
  * @param {string} cveId - The CVE ID
  * @returns {Promise<Object>} - Vulnerability data
  */
 async function createInputData(cveId) {
-  // For this demo, we'll use mock data
-  // In a real implementation, this would query NVD, MITRE, etc.
   console.log(`Creating input data for ${cveId}...`);
   
-  // Return mock data
+  try {
+    // Set up headers with API key if available
+    const headers = {
+      "User-Agent": "William Zujkowski Blog Vulnerability Analyzer",
+    };
+    
+    // Add NVD API key if available
+    if (process.env.NVD_API_KEY) {
+      console.log("Using NVD API key for higher rate limits");
+      headers["apiKey"] = process.env.NVD_API_KEY;
+    }
+    
+    // Dynamically import axios
+    const axios = (await import('axios')).default;
+    
+    // Query the NVD API for this specific CVE
+    const response = await axios.get(
+      `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${cveId}`,
+      { headers }
+    );
+    
+    if (
+      response.data &&
+      response.data.vulnerabilities &&
+      response.data.vulnerabilities.length > 0
+    ) {
+      const vulnData = response.data.vulnerabilities[0].cve;
+      
+      // Extract CVSS data
+      const metrics = vulnData.metrics;
+      const cvssV31 = metrics?.cvssMetricV31?.[0]?.cvssData;
+      const cvssV30 = metrics?.cvssMetricV30?.[0]?.cvssData;
+      const cvssV2 = metrics?.cvssMetricV2?.[0]?.cvssData;
+      
+      // Use the best available CVSS data
+      const cvssData = cvssV31 || cvssV30 || cvssV2 || {};
+      
+      // Extract severity
+      const severity = metrics?.cvssMetricV31?.[0]?.baseSeverity || 
+                       metrics?.cvssMetricV30?.[0]?.baseSeverity ||
+                       metrics?.cvssMetricV2?.[0]?.baseSeverity ||
+                       'Unknown';
+      
+      // Extract descriptions
+      const descriptions = vulnData.descriptions || [];
+      const englishDesc = descriptions.find(d => d.lang === 'en') || {};
+      
+      // Extract references
+      const references = vulnData.references || [];
+      const referenceUrls = references.map(ref => ref.url).join(', ');
+      
+      // Extract products
+      const configurations = vulnData.configurations || [];
+      let affectedProducts = [];
+      
+      configurations.forEach(config => {
+        const nodes = config.nodes || [];
+        nodes.forEach(node => {
+          const cpeMatch = node.cpeMatch || [];
+          cpeMatch.forEach(cpe => {
+            if (cpe.criteria) {
+              // Extract product name from CPE
+              const parts = cpe.criteria.split(':');
+              if (parts.length >= 5) {
+                const vendor = parts[3];
+                const product = parts[4];
+                const version = parts[5] || 'All versions';
+                affectedProducts.push(`${vendor} ${product} ${version}`);
+              }
+            }
+          });
+        });
+      });
+      
+      // De-duplicate product list
+      const uniqueProducts = [...new Set(affectedProducts)];
+      
+      // Check CISA KEV status
+      let isKev = "Unknown";
+      try {
+        const kevResponse = await axios.get(
+          "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+        );
+        
+        if (kevResponse.data && kevResponse.data.vulnerabilities) {
+          const normalizedCveId = cveId.toUpperCase().trim();
+          const found = kevResponse.data.vulnerabilities.find(v => {
+            const kevId = v.cveID || "";
+            return kevId.toUpperCase().trim() === normalizedCveId;
+          });
+          
+          isKev = found ? "Yes" : "No";
+        }
+      } catch (error) {
+        console.warn("Error checking KEV status:", error.message);
+      }
+      
+      // Build a clean structured data object for the template
+      return {
+        CVE_ID: cveId,
+        DESCRIPTION: englishDesc.value || "No description available",
+        CVSS_SCORE: cvssData.baseScore || "Unknown",
+        CVSS_VECTOR: cvssData.vectorString || "Unknown",
+        SEVERITY_RATING: severity,
+        VULNERABILITY_TYPE: englishDesc.value ? extractVulnerabilityType(englishDesc.value) : "Unknown",
+        AFFECTED_PRODUCTS: uniqueProducts.join(', ') || "Unknown",
+        AFFECTED_VERSIONS: uniqueProducts.join(', ') || "Unknown",
+        TECHNICAL_DETAILS: englishDesc.value || "Technical details not available",
+        ATTACK_VECTOR: cvssData.attackVector || "Unknown",
+        EXPLOIT_STATUS: "Unknown", // NVD doesn't provide this directly
+        PATCHES_AVAILABLE: "Unknown", // NVD doesn't provide this directly
+        WORKAROUNDS: "Consult vendor advisories for mitigation strategies",
+        REFERENCES: referenceUrls || "No references available",
+        IS_KEV: isKev,
+        DISCOVERY_DATE: vulnData.published || "Unknown",
+        VENDOR_STATEMENT: "Refer to vendor advisories for official statements",
+        SUMMARY: englishDesc.value || `Vulnerability ${cveId}`,
+        CWE_ID: vulnData.weaknesses?.[0]?.description?.[0]?.value || "Unknown"
+      };
+    }
+    
+    console.warn(`No data found for ${cveId}, using fallback data`);
+    // Use fallback data if the API request fails or returns no data
+    return getFallbackData(cveId);
+  } catch (error) {
+    console.error(`Error fetching data for ${cveId}:`, error.message);
+    // Use fallback data if the API request fails
+    return getFallbackData(cveId);
+  }
+}
+
+/**
+ * Extract vulnerability type from description
+ * @param {string} description - Vulnerability description
+ * @returns {string} - Vulnerability type
+ */
+function extractVulnerabilityType(description) {
+  const types = [
+    "Remote Code Execution",
+    "Buffer Overflow",
+    "SQL Injection",
+    "Cross-Site Scripting",
+    "Cross-Site Request Forgery",
+    "Directory Traversal",
+    "Authentication Bypass",
+    "Authorization Bypass",
+    "Information Disclosure",
+    "Denial of Service",
+    "Command Injection",
+    "Memory Corruption",
+    "Use After Free",
+    "Integer Overflow",
+    "Race Condition",
+    "Privilege Escalation"
+  ];
+  
+  // Check if any known vulnerability types are mentioned in the description
+  for (const type of types) {
+    if (description.includes(type)) {
+      return type;
+    }
+  }
+  
+  // Check for common keywords
+  if (description.match(/execut(e|ing|ion)/i)) return "Code Execution";
+  if (description.match(/overflow/i)) return "Buffer Overflow";
+  if (description.match(/inject(ion)?/i)) return "Injection";
+  if (description.match(/xss/i)) return "Cross-Site Scripting";
+  if (description.match(/csrf/i)) return "Cross-Site Request Forgery";
+  if (description.match(/traversal/i)) return "Directory Traversal";
+  if (description.match(/bypass/i)) return "Security Bypass";
+  if (description.match(/disclos(e|ure)/i)) return "Information Disclosure";
+  if (description.match(/denial.of.service|dos/i)) return "Denial of Service";
+  if (description.match(/escalat(e|ion)/i)) return "Privilege Escalation";
+  
+  // Default to generic vulnerability type
+  return "Security Vulnerability";
+}
+
+/**
+ * Get fallback data when API requests fail
+ * @param {string} cveId - The CVE ID
+ * @returns {Object} - Fallback vulnerability data
+ */
+function getFallbackData(cveId) {
   return {
     CVE_ID: cveId,
-    DESCRIPTION: "This is a mock vulnerability for demonstration purposes.",
+    DESCRIPTION: "This is a placeholder for a vulnerability that could not be fetched from NVD.",
     CVSS_SCORE: "9.8",
     CVSS_VECTOR: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
     VULNERABILITY_TYPE: "Remote Code Execution",
@@ -66,20 +248,88 @@ async function createInputData(cveId) {
     PATCHES_AVAILABLE: "Yes",
     WORKAROUNDS: "Disable the affected component until patched.",
     REFERENCES: "https://example.com/advisory",
-    IS_KEV: "Yes",
-    DISCOVERY_DATE: "2023-01-01",
+    IS_KEV: "Unknown",
+    DISCOVERY_DATE: new Date().toISOString().split('T')[0],
     VENDOR_STATEMENT: "The vendor has acknowledged the issue and provided patches.",
-    SUMMARY: "A critical remote code execution vulnerability in Example Product."
+    SUMMARY: `A critical vulnerability (${cveId}) affecting various products.`
   };
 }
 
 /**
- * Find the latest critical CVE
+ * Find the latest critical CVE from the last 15 days
  * @returns {Promise<string>} - CVE ID
  */
 async function findLatestCriticalCVE() {
-  // For this demo, we'll return a mock CVE ID
-  return "CVE-2023-12345";
+  try {
+    console.log("Searching for critical vulnerabilities from the last 15 days...");
+    
+    // Set up headers with API key if available
+    const headers = {
+      "User-Agent": "William Zujkowski Blog Vulnerability Analyzer",
+    };
+    
+    // Add NVD API key if available
+    if (process.env.NVD_API_KEY) {
+      console.log("Using NVD API key for higher rate limits");
+      headers["apiKey"] = process.env.NVD_API_KEY;
+    }
+    
+    // Calculate date from 15 days ago
+    const fifteenDaysAgo = new Date();
+    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+    const pubStartDate = fifteenDaysAgo.toISOString().split('T')[0];
+    
+    console.log(`Searching for vulnerabilities published since ${pubStartDate}`);
+    
+    // Dynamically import axios
+    const axios = (await import('axios')).default;
+    
+    // Query the NVD API for recent critical vulnerabilities
+    const response = await axios.get(
+      `https://services.nvd.nist.gov/rest/json/cves/2.0` +
+      `?pubStartDate=${pubStartDate}T00:00:00.000` +
+      `&cvssV3Severity=CRITICAL` +
+      `&resultsPerPage=10`, // Limit to 10 results to avoid overwhelming the API
+      { headers }
+    );
+    
+    if (
+      response.data &&
+      response.data.vulnerabilities &&
+      response.data.vulnerabilities.length > 0
+    ) {
+      // Sort vulnerabilities by CVSS score (highest first)
+      const sortedVulns = response.data.vulnerabilities.sort((a, b) => {
+        const scoreA = a.cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 0;
+        const scoreB = b.cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 0;
+        return scoreB - scoreA;
+      });
+      
+      // Find vulnerability with highest CVSS score that's in CISA KEV catalog
+      for (const vuln of sortedVulns) {
+        const cveId = vuln.cve.id;
+        console.log(`Found critical vulnerability: ${cveId} with score: ${vuln.cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 'unknown'}`);
+        
+        // For now, just return the first critical vulnerability we find
+        // In a production environment, we'd check CISA KEV and other criteria
+        return cveId;
+      }
+      
+      // If no match found in KEV, return the highest scored vulnerability
+      if (sortedVulns.length > 0) {
+        const topVuln = sortedVulns[0];
+        console.log(`No vulnerabilities in KEV found, using highest scored vulnerability: ${topVuln.cve.id}`);
+        return topVuln.cve.id;
+      }
+    }
+    
+    console.log("No critical vulnerabilities found in the last 15 days, using fallback CVE");
+    return "CVE-2023-50164"; // Fallback to a known CVE
+  } catch (error) {
+    console.error("Error finding latest critical CVE:", error.message);
+    console.log("Using fallback CVE due to error");
+    return "CVE-2023-50164"; // Fallback to a known CVE
+  }
 }
 
 /**
