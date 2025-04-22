@@ -62,30 +62,57 @@ class LlmProviderFactory {
     // Return provider-specific token tracking helpers
     switch (targetProvider.toLowerCase()) {
       case 'openai':
-        return {
-          countTokens: (text) => {
-            // OpenAI token counting logic
-            // For a simple approximation: ~4 chars per token
-            return Math.ceil(text.length / 4);
-          }
-        };
+        // Use LangChain's token counting if available, otherwise use approximation
+        try {
+          // Dynamic import for token counters to avoid dependency issues
+          return {
+            countTokens: async (text) => {
+              try {
+                const { getOpenAITokenCount } = await import("langchain/tokens/openai");
+                return await getOpenAITokenCount(text);
+              } catch (error) {
+                console.warn("Could not use LangChain token counter, using approximation");
+                // Fallback to approximation
+                return Math.ceil(text.length / 4);
+              }
+            }
+          };
+        } catch (error) {
+          console.warn("Could not import LangChain token counter, using approximation");
+          return {
+            countTokens: (text) => Math.ceil(text.length / 4)
+          };
+        }
         
       case 'claude':
       case 'anthropic':
-        return {
-          countTokens: (text) => {
-            // Claude token counting logic
-            // For a simple approximation: ~4 chars per token
-            return Math.ceil(text.length / 4);
-          }
-        };
+        // For Claude, use their approximation when available
+        try {
+          return {
+            countTokens: async (text) => {
+              try {
+                const { getAnthropicTokenCount } = await import("langchain/tokens/anthropic");
+                return await getAnthropicTokenCount(text);
+              } catch (error) {
+                console.warn("Could not use LangChain token counter, using approximation");
+                // Claude token counting approximation (slightly different than OpenAI)
+                return Math.ceil(text.length / 3.5);
+              }
+            }
+          };
+        } catch (error) {
+          console.warn("Could not import LangChain token counter, using approximation");
+          return {
+            countTokens: (text) => Math.ceil(text.length / 3.5)
+          };
+        }
         
       case 'gemini':
       case 'google':
+        // Google's Gemini models use similar tokenization to OpenAI
         return {
           countTokens: (text) => {
-            // Gemini token counting logic
-            // For a simple approximation: ~4 chars per token
+            // For Gemini, use approximation as it has similar token patterns to OpenAI
             return Math.ceil(text.length / 4);
           }
         };

@@ -36,6 +36,8 @@ program
   .option('--weekly', 'Generate a weekly roll-up of vulnerabilities')
   .option('--provider <provider>', 'LLM provider to use (openai, claude, gemini)')
   .option('--output-dir <path>', 'Output directory for blog posts')
+  .option('--use-workflow <boolean>', 'Use LangGraph workflow (true/false)', 'false')
+  .option('--enable-tracing <boolean>', 'Enable LangSmith tracing (true/false)', 'false')
   .parse(process.argv);
 
 const options = program.opts();
@@ -90,11 +92,26 @@ async function main() {
       config.setOutputDir(options.outputDir);
     }
     
+    // Set environment variables based on options
+    if (options.enableTracing === 'true') {
+      process.env.ENABLE_TRACING = 'true';
+    }
+    
     // Override provider if specified
     const provider = options.provider || config.getLlmProvider();
     
-    // Create LLM client
-    const llmClient = new LlmClient(provider);
+    // Import dynamically to avoid circular dependencies
+    const { default: tracing } = await import('./src/utils/tracing.js');
+    const { default: VulnPostWorkflow } = await import('./src/workflow/vuln-post-workflow.js');
+    
+    // Initialize workflow
+    const workflow = new VulnPostWorkflow();
+    const useWorkflow = options.useWorkflow === 'true' || process.env.USE_WORKFLOW === 'true';
+    
+    // Log tracing status
+    if (tracing.isEnabled) {
+      console.log(`LangSmith tracing enabled. Dashboard: ${tracing.getDashboardUrl()}`);
+    }
     
     if (options.cve) {
       // Generate a blog post for a specific CVE
@@ -109,8 +126,56 @@ async function main() {
       
       console.log("Successfully created input data, generating blog post...");
       
-      // Generate blog post
-      const blogContent = await llmClient.generateBlogPost(inputData);
+      let blogContent;
+      
+      // Try LangGraph workflow if enabled, with fallback to direct generation
+      if (useWorkflow) {
+        try {
+          console.log("Using LangGraph workflow for generation...");
+          const result = await workflow.execute(inputData);
+          
+          if (result && result.success && result.post) {
+            blogContent = result.post;
+            
+            // Log workflow steps with LangSmith if enabled
+            if (tracing.isEnabled) {
+              await tracing.trackRun("Vulnerability Post Workflow", 
+                { cve: options.cve, inputData }, 
+                { blogContent, analysisSteps: {
+                  initialAnalysis: result.analysis,
+                  technicalDetails: result.technicalDetails,
+                  mitigations: result.mitigations
+                }},
+                { provider, workflowExecutionTime: Date.now() }
+              );
+            }
+          } else {
+            console.log("Workflow didn't return valid results, falling back to direct generation");
+            
+            // Fall back to direct generation
+            const llmClient = new LlmClient(provider);
+            blogContent = await llmClient.generateBlogPost(inputData);
+          }
+        } catch (workflowError) {
+          console.error("LangGraph workflow error, falling back to direct generation:", workflowError.message);
+          
+          // Create LLM client for direct generation as fallback
+          const llmClient = new LlmClient(provider);
+          blogContent = await llmClient.generateBlogPost(inputData);
+        }
+      } else {
+        // Create LLM client for direct generation
+        const llmClient = new LlmClient(provider);
+        
+        // Wrap the generate function with tracing if enabled
+        const generateFunction = tracing.isEnabled ? 
+          tracing.traceFunction(llmClient.generateBlogPost.bind(llmClient), "Generate Blog Post") : 
+          llmClient.generateBlogPost.bind(llmClient);
+        
+        // Generate blog post
+        blogContent = await generateFunction(inputData);
+      }
+      
       if (!blogContent) {
         console.error("Failed to generate blog post");
         process.exit(1);
@@ -144,8 +209,51 @@ async function main() {
       
       console.log("Successfully created input data, generating blog post...");
       
-      // Generate blog post
-      const blogContent = await llmClient.generateBlogPost(inputData);
+      let blogContent;
+      
+      // Try LangGraph workflow if enabled, with fallback to direct generation
+      if (useWorkflow) {
+        try {
+          console.log("Using LangGraph workflow for generation...");
+          const result = await workflow.execute(inputData);
+          
+          if (result && result.success && result.post) {
+            blogContent = result.post;
+            
+            // Log workflow steps with LangSmith if enabled
+            if (tracing.isEnabled) {
+              await tracing.trackRun("Latest Vulnerability Post Workflow", 
+                { cve: latestCveId, inputData }, 
+                { blogContent, analysisSteps: {
+                  initialAnalysis: result.analysis,
+                  technicalDetails: result.technicalDetails,
+                  mitigations: result.mitigations
+                }},
+                { provider, workflowExecutionTime: Date.now() }
+              );
+            }
+          } else {
+            console.log("Workflow didn't return valid results, falling back to direct generation");
+            
+            // Fall back to direct generation
+            const llmClient = new LlmClient(provider);
+            blogContent = await llmClient.generateBlogPost(inputData);
+          }
+        } catch (workflowError) {
+          console.error("LangGraph workflow error, falling back to direct generation:", workflowError.message);
+          
+          // Create LLM client for direct generation as fallback
+          const llmClient = new LlmClient(provider);
+          blogContent = await llmClient.generateBlogPost(inputData);
+        }
+      } else {
+        // Create LLM client for direct generation
+        const llmClient = new LlmClient(provider);
+        
+        // Generate blog post
+        blogContent = await llmClient.generateBlogPost(inputData);
+      }
+      
       if (!blogContent) {
         console.error("Failed to generate blog post");
         process.exit(1);

@@ -44,8 +44,12 @@ class BlogSaver {
       // Create frontmatter for the blog post
       const frontmatter = this.generateFrontmatter(metadata, tags);
       
+      // Replace image placeholder with actual image path
+      const imagePath = 'blog/security-blog.jpg'; // Default security blog image
+      let processedContent = content.replace(/\{IMAGE_PATH_PLACEHOLDER\}/g, imagePath);
+      
       // Combine frontmatter and content
-      const fullContent = frontmatter + content;
+      const fullContent = frontmatter + processedContent;
       
       // Write the file
       fs.writeFileSync(filePath, fullContent, 'utf8');
