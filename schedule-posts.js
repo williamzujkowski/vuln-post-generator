@@ -9,7 +9,7 @@
  * It can be run as a cron job to automatically generate and schedule posts.
  *
  * Usage:
- *   node schedule-posts.js
+ *   node schedule-posts.js [--output-dir <path>]
  */
 
 const fs = require("fs");
@@ -17,10 +17,21 @@ const path = require("path");
 const { execSync } = require("child_process");
 const { format, subDays, parseISO, isAfter } = require("date-fns");
 
+// Parse command line arguments
+const args = process.argv.slice(2);
+let outputDirArg = null;
+
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--output-dir" && i + 1 < args.length) {
+    outputDirArg = args[i + 1];
+    break;
+  }
+}
+
 // Configuration
 const MAX_FREQUENCY_DAYS = 1; // Maximum of one post per day
 const MIN_FREQUENCY_DAYS = 7; // Minimum weekly rollup if no posts
-const POSTS_DIRECTORY = path.join(__dirname, "../../src/posts");
+const POSTS_DIRECTORY = outputDirArg || process.env.OUTPUT_DIR || path.join(__dirname, "../../src/posts");
 const LOG_FILE = path.join(__dirname, "vulnerability-posts.log");
 
 // Function to log activity
@@ -130,13 +141,19 @@ function main() {
       }
 
       logActivity(`Generating post for ${cveId}`);
-      execSync(`node ${path.join(__dirname, "generate-vuln-post.js")} --cve ${cveId}`, {
+      const command = `node ${path.join(__dirname, "generate-vuln-post.js")} --cve ${cveId}`;
+      logActivity(`Running command: ${command}`);
+      execSync(command, {
         stdio: "inherit",
+        env: {...process.env, OUTPUT_DIR: POSTS_DIRECTORY}
       });
     } else if (type === "weekly") {
       logActivity("Generating weekly rollup");
-      execSync(`node ${path.join(__dirname, "generate-vuln-post.js")} --weekly`, {
+      const command = `node ${path.join(__dirname, "generate-vuln-post.js")} --weekly`;
+      logActivity(`Running command: ${command}`);
+      execSync(command, {
         stdio: "inherit",
+        env: {...process.env, OUTPUT_DIR: POSTS_DIRECTORY}
       });
     }
 
