@@ -124,10 +124,10 @@ class MetricsLogger {
         cost: this.calculateCost(model, inputTokens, outputTokens)
       };
 
-      // Add to runs list, keeping most recent 100
+      // Add to runs list, keeping most recent 30 runs for dashboard display
       this.metrics.runs.unshift(run);
-      if (this.metrics.runs.length > 100) {
-        this.metrics.runs = this.metrics.runs.slice(0, 100);
+      if (this.metrics.runs.length > 30) {
+        this.metrics.runs = this.metrics.runs.slice(0, 30);
       }
 
       // Update run by date metrics
@@ -209,9 +209,8 @@ class MetricsLogger {
         .map(([model, count]) => ({ model, count }))
         .sort((a, b) => b.count - a.count);
         
-      // Prepare recent runs data
+      // Prepare recent runs data - show all 30 runs in the dashboard
       const recentRuns = this.metrics.runs
-        .slice(0, 10)
         .map(run => ({
           id: run.id,
           name: run.name,
