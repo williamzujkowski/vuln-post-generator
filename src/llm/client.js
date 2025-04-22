@@ -55,7 +55,7 @@ class LlmClient {
         
         // Call the LLM with LangChain
         const response = await this.llm.invoke([
-          new HumanMessage({ content: prompt })
+          new HumanMessage(prompt)
         ]);
         
         return response.content;
@@ -64,7 +64,7 @@ class LlmClient {
         
         // Call the LLM with fallback prompt
         const response = await this.llm.invoke([
-          new HumanMessage({ content: fallbackPrompt })
+          new HumanMessage(fallbackPrompt)
         ]);
         
         // Extract and return the content
@@ -105,7 +105,7 @@ class LlmClient {
       `;
       
       const response = await this.llm.invoke([
-        new HumanMessage({ content: prompt })
+        new HumanMessage(prompt)
       ]);
       
       return response.content;

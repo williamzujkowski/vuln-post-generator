@@ -55,68 +55,110 @@ class PromptManager {
         throw new Error(`Prompt template '${templateKey}' not found`);
       }
       
-      // Extract template variables - variables in the template are in the format {VARIABLE_NAME}
+      // Simple template variable replacement
+      // Extract all variable names from the template (format: {VARIABLE_NAME})
+      let processedTemplate = template;
       const variableRegex = /\{([A-Z_]+)\}/g;
-      const matches = template.matchAll(variableRegex);
-      const requiredVariables = [...new Set([...matches].map(match => match[1]))];
+      let match;
       
-      // Create a complete input data object with all required variables
-      const completeInputData = { ...inputData };
+      // Get unique variable names from the template
+      const requiredVariables = new Set();
+      while ((match = variableRegex.exec(template)) !== null) {
+        requiredVariables.add(match[1]);
+      }
       
-      // Add missing variables with default values
+      // Generate default values for missing variables
       for (const variable of requiredVariables) {
-        if (!(variable in completeInputData)) {
+        if (!(variable in inputData)) {
+          let defaultValue = '';
+          
           // Set default values for known variables
           switch (variable) {
+            case 'CVE_ID':
+              defaultValue = inputData.CVE_ID || 'Unknown CVE';
+              break;
             case 'VULN_NAME':
-              completeInputData.VULN_NAME = inputData.SUMMARY || 
-                                           `${inputData.VULNERABILITY_TYPE || 'Security'} vulnerability in ${inputData.AFFECTED_PRODUCTS || 'affected software'}`;
+              defaultValue = inputData.SUMMARY || 
+                            `${inputData.VULNERABILITY_TYPE || 'Security'} vulnerability in ${inputData.AFFECTED_PRODUCTS || 'affected software'}`;
+              break;
+            case 'CVSS_SCORE':
+              defaultValue = inputData.CVSS_SCORE || 'Unknown';
+              break;
+            case 'CVSS_VECTOR':
+              defaultValue = inputData.CVSS_VECTOR || 'Unknown';
               break;
             case 'SEVERITY_RATING':
               // Derive severity rating from CVSS score if available
               if (inputData.CVSS_SCORE) {
                 const score = parseFloat(inputData.CVSS_SCORE);
-                if (score >= 9.0) completeInputData.SEVERITY_RATING = 'Critical';
-                else if (score >= 7.0) completeInputData.SEVERITY_RATING = 'High';
-                else if (score >= 4.0) completeInputData.SEVERITY_RATING = 'Medium';
-                else completeInputData.SEVERITY_RATING = 'Low';
+                if (score >= 9.0) defaultValue = 'Critical';
+                else if (score >= 7.0) defaultValue = 'High';
+                else if (score >= 4.0) defaultValue = 'Medium';
+                else defaultValue = 'Low';
               } else {
-                completeInputData.SEVERITY_RATING = 'Unknown';
+                defaultValue = 'Unknown';
               }
               break;
             case 'AFFECTED_SOFTWARE':
-              completeInputData.AFFECTED_SOFTWARE = inputData.AFFECTED_PRODUCTS || 'Unknown software';
+              defaultValue = inputData.AFFECTED_PRODUCTS || 'Unknown software';
               break;
             case 'AFFECTED_VERSIONS':
-              completeInputData.AFFECTED_VERSIONS = inputData.AFFECTED_PRODUCTS || 'Unknown versions';
+              defaultValue = inputData.AFFECTED_PRODUCTS || 'Unknown versions';
               break;
             case 'VULN_SUMMARY':
-              completeInputData.VULN_SUMMARY = inputData.SUMMARY || inputData.DESCRIPTION || 'No summary available';
+              defaultValue = inputData.SUMMARY || inputData.DESCRIPTION || 'No summary available';
+              break;
+            case 'TECHNICAL_DETAILS':
+              defaultValue = inputData.TECHNICAL_DETAILS || 'Technical details are not fully available.';
               break;
             case 'POC_INFO':
-              completeInputData.POC_INFO = inputData.EXPLOIT_STATUS || 'Unknown';
+              defaultValue = inputData.EXPLOIT_STATUS || 'Unknown';
               break;
             case 'IMPACT_ANALYSIS':
-              completeInputData.IMPACT_ANALYSIS = 'Potential impact details are not fully available.';
+              defaultValue = 'Potential impact details are not fully available.';
               break;
             case 'MITIGATION_GUIDANCE':
-              completeInputData.MITIGATION_GUIDANCE = inputData.WORKAROUNDS || inputData.PATCHES_AVAILABLE || 'No specific mitigation guidance available.';
+              defaultValue = inputData.WORKAROUNDS || inputData.PATCHES_AVAILABLE || 'No specific mitigation guidance available.';
+              break;
+            case 'REFERENCE_URLS':
+              defaultValue = inputData.REFERENCES || 'No reference URLs available';
+              break;
+            case 'CWE_ID':
+              defaultValue = 'CWE ID not specified';
+              break;
+            case 'THREAT_ACTORS':
+              defaultValue = 'No specific threat actor information available';
+              break;
+            case 'AWS_IMPACT':
+              defaultValue = 'AWS impact not specified';
+              break;
+            case 'CLOUD_RELEVANCE':
+              defaultValue = 'Cloud relevance not specified';
+              break;
+            case 'IMAGE_PATH_PLACEHOLDER':
+              defaultValue = 'blog/security-blog.jpg';
               break;
             default:
-              completeInputData[variable] = `No ${variable.toLowerCase().replace(/_/g, ' ')} information available`;
+              defaultValue = `No ${variable.toLowerCase().replace(/_/g, ' ')} information available`;
           }
+          
           console.log(`Added default value for missing variable: ${variable}`);
+          
+          // Replace variable in template string
+          processedTemplate = processedTemplate.replace(
+            new RegExp(`\\{${variable}\\}`, 'g'), 
+            defaultValue
+          );
+        } else {
+          // Use the provided value from inputData
+          processedTemplate = processedTemplate.replace(
+            new RegExp(`\\{${variable}\\}`, 'g'), 
+            String(inputData[variable])
+          );
         }
       }
       
-      // Create LangChain prompt template with all required variables
-      const promptTemplate = new PromptTemplate({
-        template,
-        inputVariables: requiredVariables,
-      });
-      
-      // Format the template with the complete input data
-      return promptTemplate.format(completeInputData);
+      return processedTemplate;
     } catch (error) {
       console.error('Error creating vulnerability prompt:', error);
       
