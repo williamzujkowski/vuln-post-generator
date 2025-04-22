@@ -25,32 +25,63 @@ class LlmClient {
     try {
       console.log(`Generating vulnerability post with ${this.provider}...`);
       
-      // Create the prompt
-      const prompt = this.promptManager.createVulnerabilityPrompt(inputData, useRag);
+      // Create a fallback prompt
+      const fallbackPrompt = `
+        You are a security expert writing a detailed blog post about vulnerability ${inputData.CVE_ID || 'unknown'}.
+        
+        Here is what we know about the vulnerability:
+        
+        ${JSON.stringify(inputData, null, 2)}
+        
+        Write a comprehensive and technical blog post about this vulnerability.
+        Include sections for:
+        1. Introduction and Summary
+        2. Technical Details
+        3. Impact Assessment
+        4. Exploit Details
+        5. Mitigation Recommendations
+        6. Conclusion
+        
+        Format it as Markdown.
+      `;
       
-      // Estimate token usage 
-      const estimatedTokens = this.tokenTracker.countTokens(prompt);
-      console.log(`Estimated input tokens: ${estimatedTokens}`);
-      
-      // Call the LLM with LangChain
-      const response = await this.llm.invoke([
-        new HumanMessage(prompt)
-      ]);
-      
-      // Extract and return the content
-      const generatedContent = response.content;
-      
-      // Log token usage if available from LLM
-      if (response.usage) {
-        console.log(`Token Usage Summary:`);
-        console.log(`Provider: ${this.provider}`);
-        console.log(`Model: ${config.getModelName(this.provider)}`);
-        console.log(`Input tokens: ${response.usage.promptTokens}`);
-        console.log(`Output tokens: ${response.usage.completionTokens}`);
-        console.log(`Total tokens: ${response.usage.totalTokens}`);
+      try {
+        // Try to create the prompt from template
+        const prompt = this.promptManager.createVulnerabilityPrompt(inputData, useRag);
+        
+        // Estimate token usage 
+        const estimatedTokens = this.tokenTracker.countTokens(prompt);
+        console.log(`Estimated input tokens: ${estimatedTokens}`);
+        
+        // Call the LLM with LangChain
+        const response = await this.llm.invoke([
+          new HumanMessage({ content: prompt })
+        ]);
+        
+        return response.content;
+      } catch (templateError) {
+        console.log('Using fallback prompt due to template error:', templateError.message);
+        
+        // Call the LLM with fallback prompt
+        const response = await this.llm.invoke([
+          new HumanMessage({ content: fallbackPrompt })
+        ]);
+        
+        // Extract and return the content
+        const generatedContent = response.content;
+        
+        // Log token usage if available from LLM
+        if (response.usage) {
+          console.log(`Token Usage Summary (Fallback):`);
+          console.log(`Provider: ${this.provider}`);
+          console.log(`Model: ${config.getModelName(this.provider)}`);
+          console.log(`Input tokens: ${response.usage.promptTokens}`);
+          console.log(`Output tokens: ${response.usage.completionTokens}`);
+          console.log(`Total tokens: ${response.usage.totalTokens}`);
+        }
+        
+        return generatedContent;
       }
-      
-      return generatedContent;
     } catch (error) {
       console.error('Error generating blog post with LLM:', error);
       throw error;
@@ -74,7 +105,7 @@ class LlmClient {
       `;
       
       const response = await this.llm.invoke([
-        new HumanMessage(prompt)
+        new HumanMessage({ content: prompt })
       ]);
       
       return response.content;
