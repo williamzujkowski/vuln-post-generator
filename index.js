@@ -1,49 +1,114 @@
 #!/usr/bin/env node
 
 /**
- * Vulnerability Blog Post Generator
+ * Enhanced Vulnerability Blog Post Generator
  * 
  * Generates high-quality blog posts about security vulnerabilities 
  * using LangChain.js and various LLM providers.
  * 
- * Usage:
- *   node index.js --cve CVE-2023-12345  # Generate post for specific CVE
- *   node index.js --latest               # Generate post for latest critical CVE
- *   node index.js --weekly               # Generate weekly rollup post
- *   node index.js --provider openai      # Specify LLM provider
+ * Includes robust error handling, API resilience, and metrics tracking.
  */
 
-import { Command } from 'commander';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-
-// Import modules
+import yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
+import apiClient from './src/utils/api-client.js';
 import config from './src/config/index.js';
 import LlmClient from './src/llm/client.js';
 import BlogSaver from './src/output/blog-saver.js';
 import ErrorHandler from './src/utils/error-handler.js';
+import metricsLogger from './src/utils/metrics-logger.js';
 
 // Directory setup for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Set up command line options
-const program = new Command();
-program
-  .option('--cve <id>', 'Generate a blog post for a specific CVE')
-  .option('--latest', 'Generate a post for the latest critical vulnerability')
-  .option('--weekly', 'Generate a weekly roll-up of vulnerabilities')
-  .option('--provider <provider>', 'LLM provider to use (openai, claude, gemini)')
-  .option('--output-dir <path>', 'Output directory for blog posts')
-  .option('--use-workflow <boolean>', 'Use LangGraph workflow (true/false)', 'false')
-  .option('--enable-tracing <boolean>', 'Enable LangSmith tracing (true/false)', 'false')
-  .parse(process.argv);
-
-const options = program.opts();
+// Set up command line options with yargs for better UX
+const options = yargs(hideBin(process.argv))
+  .usage('Usage: $0 [options]')
+  .example('$0 --cve CVE-2023-12345', 'Generate post for specific CVE')
+  .example('$0 --latest', 'Generate post for latest critical CVE')
+  .example('$0 --weekly', 'Generate weekly rollup of vulnerabilities')
+  
+  .command('$0', 'Generate vulnerability analysis post', yargs => {
+    return yargs.check(argv => {
+      if (!argv.cve && !argv.latest && !argv.weekly) {
+        throw new Error('At least one of --cve, --latest, or --weekly must be specified');
+      }
+      return true;
+    });
+  })
+  
+  .option('cve', {
+    describe: 'Generate a blog post for a specific CVE',
+    type: 'string'
+  })
+  .option('latest', {
+    describe: 'Generate a post for the latest critical vulnerability',
+    type: 'boolean',
+    default: false
+  })
+  .option('weekly', {
+    describe: 'Generate a weekly roll-up of vulnerabilities',
+    type: 'boolean',
+    default: false
+  })
+  .option('provider', {
+    describe: 'LLM provider to use',
+    type: 'string',
+    choices: ['openai', 'claude', 'gemini'],
+    default: process.env.LLM_PROVIDER || 'gemini'
+  })
+  .option('output-dir', {
+    describe: 'Output directory for blog posts',
+    type: 'string',
+    default: process.env.OUTPUT_DIR || '../src/posts'
+  })
+  .option('use-workflow', {
+    describe: 'Use LangGraph workflow',
+    type: 'boolean',
+    default: process.env.USE_WORKFLOW === 'true' || false
+  })
+  .option('enable-tracing', {
+    describe: 'Enable LangSmith tracing',
+    type: 'boolean',
+    default: process.env.ENABLE_TRACING === 'true' || false
+  })
+  .option('debug', {
+    describe: 'Enable debug mode',
+    type: 'boolean',
+    default: process.env.DEBUG_MODE === 'true' || false
+  })
+  .option('days-back', {
+    describe: 'Days to look back for latest vulnerabilities',
+    type: 'number',
+    default: parseInt(process.env.MAX_VULNERABILITY_AGE_DAYS || '15', 10)
+  })
+  .option('severity', {
+    describe: 'Minimum severity to consider for latest vulnerabilities',
+    type: 'string',
+    choices: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+    default: 'CRITICAL'
+  })
+  .help('h')
+  .alias('h', 'help')
+  .version('1.0.0')
+  .showHelpOnFail(false, 'Specify --help for available options')
+  .wrap(100)
+  .check(argv => {
+    // Ensure only one mode is specified
+    const modes = [argv.cve, argv.latest, argv.weekly].filter(Boolean).length;
+    if (modes > 1) {
+      throw new Error('Only one of --cve, --latest, or --weekly can be specified');
+    }
+    return true;
+  })
+  .argv;
 
 /**
- * Create input data for a CVE by querying the NVD API
+ * Create input data for a CVE by querying the API
  * @param {string} cveId - The CVE ID
  * @returns {Promise<Object>} - Vulnerability data
  */
@@ -51,131 +116,92 @@ async function createInputData(cveId) {
   console.log(`Creating input data for ${cveId}...`);
   
   try {
-    // Set up headers with API key if available
-    const headers = {
-      "User-Agent": "William Zujkowski Blog Vulnerability Analyzer",
-    };
+    // Fetch vulnerability data from NVD
+    const vulnData = await apiClient.fetchCveData(cveId);
     
-    // Add NVD API key if available
-    if (process.env.NVD_API_KEY) {
-      console.log("Using NVD API key for higher rate limits");
-      headers["apiKey"] = process.env.NVD_API_KEY;
+    if (!vulnData) {
+      console.warn(`No data found for ${cveId}, using fallback data`);
+      return getFallbackData(cveId);
     }
     
-    // Dynamically import axios
-    const axios = (await import('axios')).default;
+    // Extract CVSS data
+    const metrics = vulnData.metrics;
+    const cvssV31 = metrics?.cvssMetricV31?.[0]?.cvssData;
+    const cvssV30 = metrics?.cvssMetricV30?.[0]?.cvssData;
+    const cvssV2 = metrics?.cvssMetricV2?.[0]?.cvssData;
     
-    // Query the NVD API for this specific CVE
-    const response = await axios.get(
-      `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${cveId}`,
-      { headers }
-    );
+    // Use the best available CVSS data
+    const cvssData = cvssV31 || cvssV30 || cvssV2 || {};
     
-    if (
-      response.data &&
-      response.data.vulnerabilities &&
-      response.data.vulnerabilities.length > 0
-    ) {
-      const vulnData = response.data.vulnerabilities[0].cve;
-      
-      // Extract CVSS data
-      const metrics = vulnData.metrics;
-      const cvssV31 = metrics?.cvssMetricV31?.[0]?.cvssData;
-      const cvssV30 = metrics?.cvssMetricV30?.[0]?.cvssData;
-      const cvssV2 = metrics?.cvssMetricV2?.[0]?.cvssData;
-      
-      // Use the best available CVSS data
-      const cvssData = cvssV31 || cvssV30 || cvssV2 || {};
-      
-      // Extract severity
-      const severity = metrics?.cvssMetricV31?.[0]?.baseSeverity || 
-                       metrics?.cvssMetricV30?.[0]?.baseSeverity ||
-                       metrics?.cvssMetricV2?.[0]?.baseSeverity ||
-                       'Unknown';
-      
-      // Extract descriptions
-      const descriptions = vulnData.descriptions || [];
-      const englishDesc = descriptions.find(d => d.lang === 'en') || {};
-      
-      // Extract references
-      const references = vulnData.references || [];
-      const referenceUrls = references.map(ref => ref.url).join(', ');
-      
-      // Extract products
-      const configurations = vulnData.configurations || [];
-      let affectedProducts = [];
-      
-      configurations.forEach(config => {
-        const nodes = config.nodes || [];
-        nodes.forEach(node => {
-          const cpeMatch = node.cpeMatch || [];
-          cpeMatch.forEach(cpe => {
-            if (cpe.criteria) {
-              // Extract product name from CPE
-              const parts = cpe.criteria.split(':');
-              if (parts.length >= 5) {
-                const vendor = parts[3];
-                const product = parts[4];
-                const version = parts[5] || 'All versions';
-                affectedProducts.push(`${vendor} ${product} ${version}`);
-              }
+    // Extract severity
+    const severity = metrics?.cvssMetricV31?.[0]?.baseSeverity || 
+                     metrics?.cvssMetricV30?.[0]?.baseSeverity ||
+                     metrics?.cvssMetricV2?.[0]?.baseSeverity ||
+                     'Unknown';
+    
+    // Extract descriptions
+    const descriptions = vulnData.descriptions || [];
+    const englishDesc = descriptions.find(d => d.lang === 'en') || {};
+    
+    // Extract references
+    const references = vulnData.references || [];
+    const referenceUrls = references.map(ref => ref.url).join(', ');
+    
+    // Extract products
+    const configurations = vulnData.configurations || [];
+    let affectedProducts = [];
+    
+    configurations.forEach(config => {
+      const nodes = config.nodes || [];
+      nodes.forEach(node => {
+        const cpeMatch = node.cpeMatch || [];
+        cpeMatch.forEach(cpe => {
+          if (cpe.criteria) {
+            // Extract product name from CPE
+            const parts = cpe.criteria.split(':');
+            if (parts.length >= 5) {
+              const vendor = parts[3];
+              const product = parts[4];
+              const version = parts[5] || 'All versions';
+              affectedProducts.push(`${vendor} ${product} ${version}`);
             }
-          });
+          }
         });
       });
-      
-      // De-duplicate product list
-      const uniqueProducts = [...new Set(affectedProducts)];
-      
-      // Check CISA KEV status
-      let isKev = "Unknown";
-      try {
-        const kevResponse = await axios.get(
-          "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-        );
-        
-        if (kevResponse.data && kevResponse.data.vulnerabilities) {
-          const normalizedCveId = cveId.toUpperCase().trim();
-          const found = kevResponse.data.vulnerabilities.find(v => {
-            const kevId = v.cveID || "";
-            return kevId.toUpperCase().trim() === normalizedCveId;
-          });
-          
-          isKev = found ? "Yes" : "No";
-        }
-      } catch (error) {
-        console.warn("Error checking KEV status:", error.message);
-      }
-      
-      // Build a clean structured data object for the template
-      return {
-        CVE_ID: cveId,
-        DESCRIPTION: englishDesc.value || "No description available",
-        CVSS_SCORE: cvssData.baseScore || "Unknown",
-        CVSS_VECTOR: cvssData.vectorString || "Unknown",
-        SEVERITY_RATING: severity,
-        VULNERABILITY_TYPE: englishDesc.value ? extractVulnerabilityType(englishDesc.value) : "Unknown",
-        AFFECTED_PRODUCTS: uniqueProducts.join(', ') || "Unknown",
-        AFFECTED_VERSIONS: uniqueProducts.join(', ') || "Unknown",
-        TECHNICAL_DETAILS: englishDesc.value || "Technical details not available",
-        ATTACK_VECTOR: cvssData.attackVector || "Unknown",
-        EXPLOIT_STATUS: "Unknown", // NVD doesn't provide this directly
-        PATCHES_AVAILABLE: "Unknown", // NVD doesn't provide this directly
-        WORKAROUNDS: "Consult vendor advisories for mitigation strategies",
-        REFERENCES: referenceUrls || "No references available",
-        IS_KEV: isKev,
-        DISCOVERY_DATE: vulnData.published || "Unknown",
-        VENDOR_STATEMENT: "Refer to vendor advisories for official statements",
-        SUMMARY: englishDesc.value || `Vulnerability ${cveId}`,
-        CWE_ID: vulnData.weaknesses?.[0]?.description?.[0]?.value || "Unknown"
-      };
-    }
+    });
     
-    console.warn(`No data found for ${cveId}, using fallback data`);
-    // Use fallback data if the API request fails or returns no data
-    return getFallbackData(cveId);
+    // De-duplicate product list
+    const uniqueProducts = [...new Set(affectedProducts)];
+    
+    // Check CISA KEV status
+    const kevData = await apiClient.checkKevStatus(cveId);
+    const isKev = kevData ? "Yes" : "No";
+    
+    // Build a clean structured data object for the template
+    return {
+      CVE_ID: cveId,
+      DESCRIPTION: englishDesc.value || "No description available",
+      CVSS_SCORE: cvssData.baseScore || "Unknown",
+      CVSS_VECTOR: cvssData.vectorString || "Unknown",
+      SEVERITY_RATING: severity,
+      VULNERABILITY_TYPE: englishDesc.value ? extractVulnerabilityType(englishDesc.value) : "Unknown",
+      AFFECTED_PRODUCTS: uniqueProducts.join(', ') || "Unknown",
+      AFFECTED_VERSIONS: uniqueProducts.join(', ') || "Unknown",
+      TECHNICAL_DETAILS: englishDesc.value || "Technical details not available",
+      ATTACK_VECTOR: cvssData.attackVector || "Unknown",
+      EXPLOIT_STATUS: isKev === "Yes" ? "Known to be exploited in the wild" : "Unknown",
+      PATCHES_AVAILABLE: "Unknown", // NVD doesn't provide this directly
+      WORKAROUNDS: "Consult vendor advisories for mitigation strategies",
+      REFERENCES: referenceUrls || "No references available",
+      IS_KEV: isKev,
+      DISCOVERY_DATE: vulnData.published || "Unknown",
+      VENDOR_STATEMENT: "Refer to vendor advisories for official statements",
+      SUMMARY: englishDesc.value || `Vulnerability ${cveId}`,
+      CWE_ID: vulnData.weaknesses?.[0]?.description?.[0]?.value || "Unknown"
+    };
   } catch (error) {
     console.error(`Error fetching data for ${cveId}:`, error.message);
+    
     // Use fallback data if the API request fails
     return getFallbackData(cveId);
   }
@@ -256,77 +282,44 @@ function getFallbackData(cveId) {
 }
 
 /**
- * Find the latest critical CVE from the last 15 days
+ * Find the latest critical CVE from the last N days
+ * @param {number} daysBack - Number of days to look back
+ * @param {string} severity - Minimum severity level
  * @returns {Promise<string>} - CVE ID
  */
-async function findLatestCriticalCVE() {
+async function findLatestCriticalCVE(daysBack = 15, severity = 'CRITICAL') {
   try {
-    console.log("Searching for critical vulnerabilities from the last 15 days...");
+    console.log(`Searching for ${severity} vulnerabilities from the last ${daysBack} days...`);
     
-    // Set up headers with API key if available
-    const headers = {
-      "User-Agent": "William Zujkowski Blog Vulnerability Analyzer",
-    };
+    // Find recent vulnerabilities using the API client
+    const vulnerabilities = await apiClient.findRecentVulnerabilities({
+      daysBack,
+      severity,
+      limit: 10
+    });
     
-    // Add NVD API key if available
-    if (process.env.NVD_API_KEY) {
-      console.log("Using NVD API key for higher rate limits");
-      headers["apiKey"] = process.env.NVD_API_KEY;
-    }
-    
-    // Calculate date from 15 days ago
-    const fifteenDaysAgo = new Date();
-    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
-    const pubStartDate = fifteenDaysAgo.toISOString().split('T')[0];
-    
-    console.log(`Searching for vulnerabilities published since ${pubStartDate}`);
-    
-    // Dynamically import axios
-    const axios = (await import('axios')).default;
-    
-    // Query the NVD API for recent critical vulnerabilities
-    const response = await axios.get(
-      `https://services.nvd.nist.gov/rest/json/cves/2.0` +
-      `?pubStartDate=${pubStartDate}T00:00:00.000` +
-      `&cvssV3Severity=CRITICAL` +
-      `&resultsPerPage=10`, // Limit to 10 results to avoid overwhelming the API
-      { headers }
-    );
-    
-    if (
-      response.data &&
-      response.data.vulnerabilities &&
-      response.data.vulnerabilities.length > 0
-    ) {
-      // Sort vulnerabilities by CVSS score (highest first)
-      const sortedVulns = response.data.vulnerabilities.sort((a, b) => {
-        const scoreA = a.cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 0;
-        const scoreB = b.cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 0;
-        return scoreB - scoreA;
-      });
-      
-      // Find vulnerability with highest CVSS score that's in CISA KEV catalog
-      for (const vuln of sortedVulns) {
+    if (vulnerabilities.length > 0) {
+      // Check if any are in the KEV catalog
+      for (const vuln of vulnerabilities) {
         const cveId = vuln.cve.id;
-        console.log(`Found critical vulnerability: ${cveId} with score: ${vuln.cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 'unknown'}`);
+        const kevStatus = await apiClient.checkKevStatus(cveId);
         
-        // For now, just return the first critical vulnerability we find
-        // In a production environment, we'd check CISA KEV and other criteria
-        return cveId;
+        if (kevStatus) {
+          console.log(`Found ${severity} vulnerability in KEV catalog: ${cveId}`);
+          return cveId;
+        }
       }
       
       // If no match found in KEV, return the highest scored vulnerability
-      if (sortedVulns.length > 0) {
-        const topVuln = sortedVulns[0];
-        console.log(`No vulnerabilities in KEV found, using highest scored vulnerability: ${topVuln.cve.id}`);
-        return topVuln.cve.id;
-      }
+      const topVuln = vulnerabilities[0];
+      console.log(`No vulnerabilities in KEV found, using highest scored vulnerability: ${topVuln.cve.id}`);
+      return topVuln.cve.id;
     }
     
-    console.log("No critical vulnerabilities found in the last 15 days, using fallback CVE");
+    console.log(`No ${severity} vulnerabilities found in the last ${daysBack} days, using fallback CVE`);
     return "CVE-2023-50164"; // Fallback to a known CVE
   } catch (error) {
-    console.error("Error finding latest critical CVE:", error.message);
+    ErrorHandler.handleError(error, 'FindLatestCVE');
     console.log("Using fallback CVE due to error");
     return "CVE-2023-50164"; // Fallback to a known CVE
   }
@@ -337,13 +330,20 @@ async function findLatestCriticalCVE() {
  */
 async function main() {
   try {
+    // Process debug mode
+    if (options.debug) {
+      console.log("Debug mode enabled");
+      console.log("Command line options:", options);
+      process.env.DEBUG_MODE = 'true';
+    }
+    
     // Set output directory if provided
     if (options.outputDir) {
       config.setOutputDir(options.outputDir);
     }
     
     // Set environment variables based on options
-    if (options.enableTracing === 'true') {
+    if (options.enableTracing) {
       process.env.ENABLE_TRACING = 'true';
     }
     
@@ -356,7 +356,7 @@ async function main() {
     
     // Initialize workflow
     const workflow = new VulnPostWorkflow();
-    const useWorkflow = options.useWorkflow === 'true' || process.env.USE_WORKFLOW === 'true';
+    const useWorkflow = options.useWorkflow;
     
     // Log tracing status
     if (tracing.isEnabled) {
@@ -370,8 +370,12 @@ async function main() {
       // Create input data
       const inputData = await createInputData(options.cve);
       if (!inputData) {
-        console.error("Failed to get vulnerability data");
-        process.exit(1);
+        const error = ErrorHandler.createError(
+          "Failed to get vulnerability data, even fallback data",
+          "CVE Data Fetch",
+          ErrorHandler.ERROR_CATEGORIES.API
+        );
+        ErrorHandler.handleError(error, 'CVE Data Fetch', true);
       }
       
       console.log("Successfully created input data, generating blog post...");
@@ -407,7 +411,8 @@ async function main() {
             blogContent = await llmClient.generateBlogPost(inputData);
           }
         } catch (workflowError) {
-          console.error("LangGraph workflow error, falling back to direct generation:", workflowError.message);
+          ErrorHandler.handleError(workflowError, 'LangGraph Workflow');
+          console.log("Falling back to direct generation");
           
           // Create LLM client for direct generation as fallback
           const llmClient = new LlmClient(provider);
@@ -427,8 +432,12 @@ async function main() {
       }
       
       if (!blogContent) {
-        console.error("Failed to generate blog post");
-        process.exit(1);
+        const error = ErrorHandler.createError(
+          "Failed to generate blog post",
+          "Blog Generation",
+          ErrorHandler.ERROR_CATEGORIES.LLM
+        );
+        ErrorHandler.handleError(error, 'Blog Generation', true);
       }
       
       console.log("Successfully generated blog post, saving...");
@@ -442,19 +451,27 @@ async function main() {
       console.log("Searching for latest critical vulnerabilities...");
       
       // Find the latest critical vulnerability
-      const latestCveId = await findLatestCriticalCVE();
+      const latestCveId = await findLatestCriticalCVE(options.daysBack, options.severity);
       if (!latestCveId) {
-        console.error("Failed to find a recent critical CVE");
-        process.exit(1);
+        const error = ErrorHandler.createError(
+          "Failed to find a recent critical CVE",
+          "Latest CVE Search",
+          ErrorHandler.ERROR_CATEGORIES.API
+        );
+        ErrorHandler.handleError(error, 'Latest CVE Search', true);
       }
       
-      console.log(`Found recent critical vulnerability: ${latestCveId}`);
+      console.log(`Found recent ${options.severity} vulnerability: ${latestCveId}`);
       
       // Create input data
       const inputData = await createInputData(latestCveId);
       if (!inputData) {
-        console.error("Failed to get vulnerability data");
-        process.exit(1);
+        const error = ErrorHandler.createError(
+          "Failed to get vulnerability data",
+          "CVE Data Fetch",
+          ErrorHandler.ERROR_CATEGORIES.API
+        );
+        ErrorHandler.handleError(error, 'CVE Data Fetch', true);
       }
       
       console.log("Successfully created input data, generating blog post...");
@@ -490,7 +507,7 @@ async function main() {
             blogContent = await llmClient.generateBlogPost(inputData);
           }
         } catch (workflowError) {
-          console.error("LangGraph workflow error, falling back to direct generation:", workflowError.message);
+          ErrorHandler.handleError(workflowError, 'LangGraph Workflow');
           
           // Create LLM client for direct generation as fallback
           const llmClient = new LlmClient(provider);
@@ -505,8 +522,12 @@ async function main() {
       }
       
       if (!blogContent) {
-        console.error("Failed to generate blog post");
-        process.exit(1);
+        const error = ErrorHandler.createError(
+          "Failed to generate blog post",
+          "Blog Generation",
+          ErrorHandler.ERROR_CATEGORIES.LLM
+        );
+        ErrorHandler.handleError(error, 'Blog Generation', true);
       }
       
       console.log("Successfully generated blog post, saving...");
@@ -518,11 +539,12 @@ async function main() {
     }
     else if (options.weekly) {
       console.log("Weekly rollup functionality not yet implemented");
-      process.exit(1);
-    }
-    else {
-      // No options specified, show help
-      program.help();
+      const error = ErrorHandler.createError(
+        "Weekly rollup functionality not yet implemented",
+        "Weekly Rollup",
+        ErrorHandler.ERROR_CATEGORIES.CONFIG
+      );
+      ErrorHandler.handleError(error, 'Weekly Rollup', true);
     }
   } catch (error) {
     ErrorHandler.handleError(error, 'Main process', true);

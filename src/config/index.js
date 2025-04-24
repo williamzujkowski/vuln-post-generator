@@ -74,7 +74,7 @@ class Config {
     
     switch (targetProvider.toLowerCase()) {
       case 'openai':
-        return useEfficientModel ? 'gpt-3.5-turbo' : 'gpt-4';
+        return useEfficientModel ? 'gpt-3.5-turbo' : 'gpt-4o'; // Updated to use GPT-4o
       case 'claude':
       case 'anthropic':
         return useEfficientModel ? 'claude-3-haiku-20240307' : 'claude-3-opus-20240229';

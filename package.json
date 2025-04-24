@@ -1,57 +1,36 @@
 {
-  "name": "vuln-post-generator",
+  "name": "vuln-blog",
   "version": "1.0.0",
-  "description": "A comprehensive system for generating high-quality vulnerability analysis blog posts",
+  "description": "Tool for generating vulnerability analysis blog posts using LLMs",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "generate": "node index.js",
-    "generate:latest": "node index.js --latest",
-    "generate:openai": "node index.js --provider openai",
-    "generate:gemini": "node index.js --provider gemini",
-    "generate:claude": "node index.js --provider claude",
-    "schedule": "node schedule-posts.js",
-    "update-index": "node scripts/update-index.js",
-    "test-openai": "node test-models.js --provider openai",
-    "test-gemini": "node test-models.js --provider gemini",
-    "test-claude": "node test-models.js --provider claude",
-    "test-models": "node test-models.js --provider all",
-    "test:sources": "node test-data-sources.js",
-    "test:sources:cve": "node test-data-sources.js --cve",
-    "test:vuldb": "node test-vuldb.js",
-    "test:vuldb:cve": "node test-vuldb.js --cve",
-    "setup-cron": "./setup-cron.sh"
+    "lint": "eslint .",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
-    "vulnerability",
     "security",
-    "blog",
+    "vulnerability",
     "llm",
-    "gpt",
-    "gemini",
-    "claude",
-    "prompt",
-    "rag"
+    "blog",
+    "generator"
   ],
   "author": "William Zujkowski",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/yourusername/vuln-post-generator.git"
-  },
   "dependencies": {
-    "@google/generative-ai": "^0.2.0",
-    "@langchain/anthropic": "^0.0.10",
-    "@langchain/google-genai": "^0.0.7",
-    "@langchain/langgraph": "^0.2.65",
-    "@langchain/openai": "^0.0.10",
+    "@google/generative-ai": "^0.1.3",
+    "@langchain/community": "^0.0.16",
+    "@langchain/core": "^0.1.16",
+    "@langchain/langgraph": "^0.0.3",
+    "@langchain/openai": "^0.0.11",
+    "@langsmith/sdk": "^0.0.41",
+    "anthropic": "^0.5.0",
     "axios": "^1.6.2",
+    "axios-retry": "^3.9.0",
     "commander": "^11.1.0",
-    "date-fns": "^2.30.0",
     "dotenv": "^16.3.1",
-    "glob": "^10.3.10",
-    "langchain": "^0.0.200",
-    "lru-cache": "^10.2.0",
-    "rimraf": "^5.0.5"
+    "langchain": "^0.0.201",
+    "openai": "^4.19.0",
+    "yargs": "^17.7.2"
   }
 }

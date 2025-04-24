@@ -1,4 +1,4 @@
-// Local metrics logging system for LLM usage
+// Enhanced metrics logging system for LLM usage and API calls
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -7,8 +7,18 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Logs directory for detailed metrics
+const LOGS_DIR = path.join(__dirname, '..', '..', 'logs');
+if (!fs.existsSync(LOGS_DIR)) {
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+}
+
+// Log file paths
+const API_LOG_PATH = path.join(LOGS_DIR, 'api-calls.jsonl');
+const ERROR_LOG_PATH = path.join(LOGS_DIR, 'errors.jsonl');
+
 /**
- * Metrics Logger for tracking LLM usage without requiring LangSmith
+ * Metrics Logger for tracking LLM usage, API calls, and errors
  */
 class MetricsLogger {
   constructor() {
@@ -41,6 +51,13 @@ class MetricsLogger {
           totalCost: 0,
           avgProcessingTime: 0,
           totalRuns: 0,
+          apiCalls: {
+            total: 0,
+            byEndpoint: {},
+            byStatus: {},
+            cacheHitRate: 0,
+            retryRate: 0
+          },
           lastUpdated: new Date().toISOString()
         };
       }
@@ -54,6 +71,13 @@ class MetricsLogger {
         totalCost: 0,
         avgProcessingTime: 0,
         totalRuns: 0,
+        apiCalls: {
+          total: 0,
+          byEndpoint: {},
+          byStatus: {},
+          cacheHitRate: 0,
+          retryRate: 0
+        },
         lastUpdated: new Date().toISOString()
       };
     }
@@ -156,6 +180,146 @@ class MetricsLogger {
   }
 
   /**
+   * Log an API call
+   * @param {Object} data - Data about the API call
+   */
+  logApiCall(data) {
+    try {
+      const timestamp = new Date().toISOString();
+      const apiCall = {
+        timestamp,
+        ...data
+      };
+
+      // Append to detailed log file
+      fs.appendFileSync(
+        API_LOG_PATH,
+        JSON.stringify(apiCall) + '\n',
+        'utf8'
+      );
+
+      // Extract host from URL for endpoint tracking
+      let endpoint = 'unknown';
+      try {
+        if (data.url) {
+          const url = new URL(data.url);
+          endpoint = url.hostname;
+        }
+      } catch (e) {
+        // If URL parsing fails, use the raw URL string
+        endpoint = String(data.url).split('/')[2] || 'unknown';
+      }
+
+      // Update summary metrics
+      this.metrics.apiCalls = this.metrics.apiCalls || {
+        total: 0,
+        byEndpoint: {},
+        byStatus: {},
+        cacheHitRate: 0,
+        retryRate: 0
+      };
+
+      // Increment call counters
+      this.metrics.apiCalls.total += 1;
+      
+      // Update endpoint stats
+      this.metrics.apiCalls.byEndpoint[endpoint] = 
+        (this.metrics.apiCalls.byEndpoint[endpoint] || 0) + 1;
+      
+      // Update status stats
+      const status = data.status || 'unknown';
+      this.metrics.apiCalls.byStatus[status] = 
+        (this.metrics.apiCalls.byStatus[status] || 0) + 1;
+      
+      // Update cache hit stats if applicable
+      if (data.cached !== undefined) {
+        // Calculate new cache hit rate
+        const totalWithCacheInfo = Object.values(this.metrics.apiCalls.byStatus).reduce((a, b) => a + b, 0);
+        const cacheHits = this.metrics.apiCalls.cacheHits || 0;
+        const newCacheHits = data.cached ? cacheHits + 1 : cacheHits;
+        
+        this.metrics.apiCalls.cacheHits = newCacheHits;
+        this.metrics.apiCalls.cacheHitRate = totalWithCacheInfo > 0 
+          ? (newCacheHits / totalWithCacheInfo) * 100 
+          : 0;
+      }
+      
+      // Save updated metrics
+      this.saveMetrics();
+    } catch (error) {
+      console.error('Error logging API call:', error);
+    }
+  }
+
+  /**
+   * Log an API retry event
+   * @param {Object} data - Data about the API retry
+   */
+  logApiRetry(data) {
+    try {
+      const timestamp = new Date().toISOString();
+      const retryEvent = {
+        timestamp,
+        type: 'retry',
+        ...data
+      };
+
+      // Append to detailed log file
+      fs.appendFileSync(
+        API_LOG_PATH,
+        JSON.stringify(retryEvent) + '\n',
+        'utf8'
+      );
+
+      // Update retry metrics
+      this.metrics.apiCalls = this.metrics.apiCalls || {
+        total: 0,
+        byEndpoint: {},
+        byStatus: {},
+        cacheHitRate: 0,
+        retryRate: 0,
+        retries: 0
+      };
+
+      // Increment retry counter
+      this.metrics.apiCalls.retries = (this.metrics.apiCalls.retries || 0) + 1;
+      
+      // Update retry rate
+      this.metrics.apiCalls.retryRate = this.metrics.apiCalls.total > 0 
+        ? (this.metrics.apiCalls.retries / this.metrics.apiCalls.total) * 100 
+        : 0;
+      
+      // Save updated metrics
+      this.saveMetrics();
+    } catch (error) {
+      console.error('Error logging API retry:', error);
+    }
+  }
+
+  /**
+   * Log an error
+   * @param {Object} data - Data about the error
+   */
+  logError(data) {
+    try {
+      const timestamp = new Date().toISOString();
+      const errorEvent = {
+        timestamp,
+        ...data
+      };
+
+      // Append to detailed log file
+      fs.appendFileSync(
+        ERROR_LOG_PATH,
+        JSON.stringify(errorEvent) + '\n',
+        'utf8'
+      );
+    } catch (error) {
+      console.error('Error logging error event:', error);
+    }
+  }
+
+  /**
    * Calculate estimated cost for the run
    * @param {string} model - Model name
    * @param {number} inputTokens - Input token count
@@ -209,7 +373,7 @@ class MetricsLogger {
         .map(([model, count]) => ({ model, count }))
         .sort((a, b) => b.count - a.count);
         
-      // Prepare recent runs data - show all 30 runs in the dashboard
+      // Prepare recent runs data
       const recentRuns = this.metrics.runs
         .map(run => ({
           id: run.id,
@@ -221,7 +385,14 @@ class MetricsLogger {
           inputTokens: run.inputTokens,
           outputTokens: run.outputTokens
         }));
-        
+      
+      // Format API calls by endpoint for charting
+      const apiCallsByEndpoint = this.metrics.apiCalls?.byEndpoint 
+        ? Object.entries(this.metrics.apiCalls.byEndpoint)
+            .map(([endpoint, count]) => ({ endpoint, count }))
+            .sort((a, b) => b.count - a.count)
+        : [];
+            
       // Return formatted dashboard data
       return {
         totalRuns: this.metrics.totalRuns,
@@ -233,6 +404,13 @@ class MetricsLogger {
         runsByDate,
         runsByModel,
         recentRuns,
+        apiStats: {
+          totalCalls: this.metrics.apiCalls?.total || 0,
+          cacheHitRate: this.metrics.apiCalls?.cacheHitRate || 0,
+          retryRate: this.metrics.apiCalls?.retryRate || 0,
+          callsByEndpoint: apiCallsByEndpoint,
+          callsByStatus: this.metrics.apiCalls?.byStatus || {}
+        },
         lastUpdated: this.metrics.lastUpdated,
         isLocalData: true
       };
@@ -246,6 +424,13 @@ class MetricsLogger {
         runsByDate: [],
         runsByModel: [],
         recentRuns: [],
+        apiStats: {
+          totalCalls: 0,
+          cacheHitRate: 0,
+          retryRate: 0,
+          callsByEndpoint: [],
+          callsByStatus: {}
+        },
         lastUpdated: new Date().toISOString(),
         isLocalData: true,
         error: error.message

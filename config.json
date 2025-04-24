@@ -1,0 +1,55 @@
+{
+  "api": {
+    "nvd": {
+      "baseUrl": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+      "retries": 3,
+      "timeout": 10000,
+      "cacheEnabled": true,
+      "cacheTtl": 3600000
+    },
+    "cisa": {
+      "kevUrl": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+      "retries": 3,
+      "timeout": 10000,
+      "cacheEnabled": true,
+      "cacheTtl": 3600000
+    }
+  },
+  "llm": {
+    "defaultProvider": "gemini",
+    "fallbackProviders": ["claude", "openai"],
+    "models": {
+      "openai": "gpt-4o",
+      "claude": "claude-3-sonnet",
+      "gemini": "gemini-pro"
+    },
+    "maxRetries": 2,
+    "timeout": 60000
+  },
+  "output": {
+    "defaultDir": "../src/posts",
+    "filenameFormat": "YYYY-MM-DD-vulnerability-analysis-{cve}.md",
+    "frontmatterTemplate": "---\ntitle: \"{title}\"\ndate: {date}\ntags: [\"vulnerability\", \"{type}\", \"{severity}\", \"cve\"]\nlayout: post\nexcerpt: \"{excerpt}\"\n---"
+  },
+  "workflow": {
+    "enabled": false,
+    "maxRetries": 1,
+    "timeout": 120000
+  },
+  "logging": {
+    "level": "info",
+    "file": "logs/vuln-post-generator.log",
+    "maxSize": 5242880,
+    "maxFiles": 5
+  },
+  "metrics": {
+    "enabled": true,
+    "dashboardEnabled": true
+  },
+  "defaults": {
+    "severity": "CRITICAL",
+    "daysBack": 15,
+    "resultLimit": 10,
+    "fallbackCve": "CVE-2023-50164"
+  }
+}

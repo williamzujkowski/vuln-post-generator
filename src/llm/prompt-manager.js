@@ -34,6 +34,30 @@ class PromptManager {
       } else {
         console.warn(`RAG vulnerability prompt template not found at: ${ragPromptPath}`);
       }
+      
+      // General blog post prompt
+      const blogPromptPath = path.join(this.promptsDir, 'templates/blogpost.prompt');
+      if (fs.existsSync(blogPromptPath)) {
+        this.promptTemplates.generalBlog = fs.readFileSync(blogPromptPath, 'utf8');
+      } else {
+        console.warn(`General blog prompt template not found at: ${blogPromptPath}`);
+      }
+      
+      // Blog post template
+      const postTemplatePath = path.join(this.promptsDir, 'templates/post-template.md');
+      if (fs.existsSync(postTemplatePath)) {
+        this.promptTemplates.postTemplate = fs.readFileSync(postTemplatePath, 'utf8');
+      } else {
+        console.warn(`Post template not found at: ${postTemplatePath}`);
+      }
+      
+      // Load guidelines for potential reference
+      const guidelinesPath = path.join(this.promptsDir, 'guidelines/blog-guidelines.md');
+      if (fs.existsSync(guidelinesPath)) {
+        this.promptTemplates.guidelines = fs.readFileSync(guidelinesPath, 'utf8');
+      } else {
+        console.warn(`Blog guidelines not found at: ${guidelinesPath}`);
+      }
     } catch (error) {
       console.error('Error initializing prompt templates:', error);
     }
@@ -237,6 +261,84 @@ class PromptManager {
    */
   getRawTemplate(name) {
     return this.promptTemplates[name];
+  }
+  
+  /**
+   * Create a general blog post prompt with LangChain PromptTemplate
+   * @param {Object} inputData - Blog post data for the prompt
+   * @returns {Promise<string>} - Formatted prompt
+   */
+  async createGeneralBlogPrompt(inputData) {
+    try {
+      const template = this.promptTemplates.generalBlog;
+      
+      if (!template) {
+        throw new Error('General blog prompt template not found');
+      }
+      
+      // Extract variables manually from the template
+      const variableRegex = /\{([A-Z_]+)\}/g;
+      const extractedVariables = new Set();
+      let match;
+      
+      // Get unique variable names from the template
+      while ((match = variableRegex.exec(template)) !== null) {
+        extractedVariables.add(match[1]);
+      }
+      
+      const extractedVariablesArray = [...extractedVariables];
+      console.log(`Template requires ${extractedVariablesArray.length} variables: ${extractedVariablesArray.join(', ')}`);
+      
+      // Create a properly configured LangChain PromptTemplate with all required variables
+      const promptTemplate = new PromptTemplate({
+        template,
+        inputVariables: extractedVariablesArray,
+      });
+      
+      // Format the prompt with the input data
+      const formattedPrompt = await promptTemplate.format(inputData);
+      return formattedPrompt;
+    } catch (error) {
+      console.error("Error creating general blog prompt template:", error);
+      // Fall back to basic prompt
+      return this.createBasicBlogPrompt(inputData);
+    }
+  }
+  
+  /**
+   * Create a basic fallback blog prompt when template processing fails
+   * @param {Object} inputData - Blog post data
+   * @returns {string} - Basic prompt
+   */
+  createBasicBlogPrompt(inputData) {
+    const topic = inputData.TOPIC || inputData.TITLE || 'the specified topic';
+    
+    return `
+      You are a technical writer creating a detailed blog post about ${topic}.
+      
+      Here is what we know about the topic:
+      
+      ${JSON.stringify(inputData, null, 2)}
+      
+      Write a comprehensive and technical blog post about this topic.
+      Include sections for:
+      1. Introduction
+      2. Background and Context
+      3. Technical Details
+      4. Implementation or Application
+      5. Best Practices
+      6. Conclusion
+      
+      Format it as Markdown with appropriate headings, code examples, and bullet points.
+    `;
+  }
+  
+  /**
+   * Get the post template for frontmatter and structure
+   * @returns {string} - Post template
+   */
+  getPostTemplate() {
+    return this.promptTemplates.postTemplate || '';
   }
 }
 

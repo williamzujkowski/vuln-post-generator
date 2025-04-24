@@ -12,23 +12,77 @@ import metricsLogger from "../utils/metrics-logger.js";
 class LlmClient {
   constructor(provider = null) {
     this.provider = provider || config.getLlmProvider();
-    this.llm = LlmProviderFactory.createProvider(this.provider);
+    
+    // Try to create the provider with fallback options in preferred order:
+    // First OpenAI (GPT-4o), then Claude (Opus), then Gemini
+    try {
+      this.llm = LlmProviderFactory.createProvider(this.provider);
+    } catch (error) {
+      console.warn(`Failed to initialize primary provider ${this.provider}: ${error.message}`);
+      
+      // Try Claude as fallback if primary is not Claude
+      if (this.provider.toLowerCase() !== 'claude' && this.provider.toLowerCase() !== 'anthropic') {
+        try {
+          console.log("Attempting to fall back to Claude...");
+          this.provider = 'claude';
+          this.llm = LlmProviderFactory.createProvider(this.provider);
+        } catch (claudeError) {
+          console.warn(`Failed to initialize Claude fallback: ${claudeError.message}`);
+          
+          // Try Gemini as last resort
+          if (this.provider.toLowerCase() !== 'gemini' && this.provider.toLowerCase() !== 'google') {
+            try {
+              console.log("Attempting to fall back to Gemini...");
+              this.provider = 'gemini';
+              this.llm = LlmProviderFactory.createProvider(this.provider);
+            } catch (geminiError) {
+              console.error("All fallback providers failed! This is a critical error.");
+              throw new Error("Failed to initialize any LLM provider: " + error.message);
+            }
+          } else {
+            throw error; // Original error if Gemini was the initial provider
+          }
+        }
+      } else {
+        // Try Gemini as fallback if Claude was already the primary
+        try {
+          console.log("Attempting to fall back to Gemini...");
+          this.provider = 'gemini';
+          this.llm = LlmProviderFactory.createProvider(this.provider);
+        } catch (geminiError) {
+          console.error("All fallback providers failed! This is a critical error.");
+          throw new Error("Failed to initialize any LLM provider: " + error.message);
+        }
+      }
+    }
+    
+    console.log(`Successfully initialized LLM provider: ${this.provider}`);
     this.promptManager = new PromptManager();
     this.tokenTracker = LlmProviderFactory.getTokenTracker(this.provider);
   }
   
   /**
-   * Generate a blog post for a vulnerability
-   * @param {Object} inputData - Data about the vulnerability
+   * Generate a blog post for a vulnerability or general topic
+   * @param {Object} inputData - Data about the vulnerability or topic
    * @param {boolean} useRag - Whether to use RAG-enhanced generation
+   * @param {string} templateContext - Optional template context for formatting
    * @returns {Promise<string>} - Generated blog post content
    */
-  async generateBlogPost(inputData, useRag = false) {
+  async generateBlogPost(inputData, useRag = false, templateContext = '') {
     try {
-      console.log(`Generating vulnerability post with ${this.provider}...`);
+      // Determine if this is a vulnerability post or general blog post
+      const isVulnPost = inputData.CVE_ID !== undefined;
       
-      // Create a fallback prompt
-      const fallbackPrompt = `
+      if (isVulnPost) {
+        console.log(`Generating vulnerability post with ${this.provider}...`);
+      } else {
+        console.log(`Generating general blog post on "${inputData.TOPIC}" with ${this.provider}...`);
+      }
+      
+      // Create appropriate fallback prompt based on post type
+      const fallbackPrompt = isVulnPost ? 
+        // Vulnerability post fallback
+        `
         You are a security expert writing a detailed blog post about vulnerability ${inputData.CVE_ID || 'unknown'}.
         
         Here is what we know about the vulnerability:
@@ -45,14 +99,36 @@ class LlmClient {
         6. Conclusion
         
         Format it as Markdown.
-      `;
+        ` :
+        // General blog post fallback
+        `
+        You are a technical writer creating a detailed blog post about ${inputData.TOPIC || 'the specified topic'}.
+        
+        Here is what we know about the topic:
+        
+        ${JSON.stringify(inputData, null, 2)}
+        
+        Write a comprehensive and technical blog post about this topic.
+        Include sections for:
+        1. Introduction
+        2. Background and Context
+        3. Technical Details
+        4. Implementation or Application
+        5. Best Practices
+        6. Conclusion
+        
+        Format it as Markdown with appropriate headings, code examples, and bullet points.
+        ${templateContext ? '\n\nUse this template format for the final post:\n' + templateContext : ''}
+        `;
       
       try {
         // Record start time for metrics
         const startTime = new Date();
         
-        // Try to create the prompt from template
-        const prompt = await this.promptManager.createVulnerabilityPrompt(inputData, useRag);
+        // Try to create the prompt from template based on post type
+        const prompt = isVulnPost ? 
+          await this.promptManager.createVulnerabilityPrompt(inputData, useRag) :
+          await this.promptManager.createGeneralBlogPrompt(inputData);
         
         // Estimate token usage 
         let estimatedTokens;

@@ -268,6 +268,7 @@ class VulnPostWorkflow {
       async (state) => {
         try {
           // Use the LLM client's full blog post generation instead
+          // Explicitly set useRag to false to prioritize high-quality generation
           const blogPost = await this.llmClient.generateBlogPost({
             CVE_ID: state.vulnerability_data.value.CVE_ID,
             DESCRIPTION: `This post combines: ${state.initial_analysis.value} ${state.technical_details.value} ${state.mitigation_options.value}`,
@@ -278,7 +279,7 @@ class VulnPostWorkflow {
             CVSS_VECTOR: state.vulnerability_data.value.CVSS_VECTOR,
             AFFECTED_PRODUCTS: state.vulnerability_data.value.AFFECTED_PRODUCTS,
             REFERENCES: state.vulnerability_data.value.REFERENCES
-          });
+          }, false);
           
           return {
             complete_post: blogPost
